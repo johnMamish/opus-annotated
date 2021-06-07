@@ -129,6 +129,8 @@ int ec_laplace_decode(ec_dec *dec, unsigned fs, int decay)
    celt_assert(fs>0);
    celt_assert(fl<=fm);
    celt_assert(fm<IMIN(fl+fs,32768));
+
+   //
    ec_dec_update(dec, fl, IMIN(fl+fs,32768), 32768);
    return val;
 }

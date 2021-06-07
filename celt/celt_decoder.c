@@ -444,6 +444,9 @@ void celt_synthesis(const CELTMode *mode, celt_norm *X, celt_sig * out_syn[],
    RESTORE_STACK;
 }
 
+/**
+ *
+ */
 static void tf_decode(int start, int end, int isTransient, int *tf_res, int LM, ec_dec *dec)
 {
    int i, curr, tf_select;
@@ -817,6 +820,12 @@ static void celt_decode_lost(CELTDecoder * OPUS_RESTRICT st, int N, int LM)
    RESTORE_STACK;
 }
 
+/**
+ * Name "_with_ec" is really confusing; it stands for "with entropy coder", but that's the only
+ * option for decoding the bitstream!!!
+ *
+ * ec_dec and ec_ctx are defined in celt/entcode.h
+ */
 int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *data,
       int len, opus_val16 * OPUS_RESTRICT pcm, int frame_size, ec_dec *dec, int accum)
 {
@@ -956,13 +965,17 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
          oldBandE[i]=MAX16(oldBandE[i],oldBandE[nbEBands+i]);
    }
 
+   // Decode "silence" symbol.
+   // The way they do this is subtle, they use ec_tell which
+
    total_bits = len*8;
    tell = ec_tell(dec);
 
    if (tell >= total_bits)
       silence = 1;
-   else if (tell==1)
+   else if (tell==1) {
       silence = ec_dec_bit_logp(dec, 15);
+   }
    else
       silence = 0;
    if (silence)
@@ -1005,35 +1018,48 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
 
    /* Decode the global flags (first symbols in the stream) */
    intra_ener = tell+3<=total_bits ? ec_dec_bit_logp(dec, 3) : 0;
-   /* Get band energies */
+
+   //////////////////////////////////////////////////////
+   // COARSE BAND ENERGIES
    unquant_coarse_energy(mode, start, end, oldBandE,
          intra_ener, dec, C, LM);
 
    ALLOC(tf_res, nbEBands, int);
    tf_decode(start, end, isTransient, tf_res, LM, dec);
 
+   ////////////////////////////////////////////////
+   // AMOUNT OF VECTOR SPREADING
+   // The "spreading" applies a rotation to the shape vector, which spreads the spectrum a little
+   // bit to avoid "birdie" actifacts.
    tell = ec_tell(dec);
    spread_decision = SPREAD_NORMAL;
    if (tell+4 <= total_bits)
       spread_decision = ec_dec_icdf(dec, spread_icdf, 5);
 
+   ////////////////////////////////////////////////
+   // Calculate the "per-band maximum allocation vector" from PulseCache mode->cache.
    ALLOC(cap, nbEBands, int);
-
    init_caps(mode,cap,LM,C);
 
+   ////////////////////////////////////////////////
+   // Decode boost bits and store them in 'offsets'
    ALLOC(offsets, nbEBands, int);
 
    dynalloc_logp = 6;
    total_bits<<=BITRES;
    tell = ec_tell_frac(dec);
+
+   // 'i' is the band index here.
    for (i=start;i<end;i++)
    {
       int width, quanta;
       int dynalloc_loop_logp;
       int boost;
       width = C*(eBands[i+1]-eBands[i])<<LM;
+
       /* quanta is 6 bits, but no more than 1 bit/sample
          and no less than 1/8 bit/sample */
+      // 'quanta' refers to the number of bits that get added per boost.
       quanta = IMIN(width<<BITRES, IMAX(6<<BITRES, width));
       dynalloc_loop_logp = dynalloc_logp;
       boost = 0;
@@ -1041,27 +1067,34 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
       {
          int flag;
          flag = ec_dec_bit_logp(dec, dynalloc_loop_logp);
-         tell = ec_tell_frac(dec);
+         tell = ec_tell_frac(dec);   //// <<<<
          if (!flag)
             break;
          boost += quanta;
-         total_bits -= quanta;
+         total_bits -= quanta;       //// <<<<
          dynalloc_loop_logp = 1;
       }
-      offsets[i] = boost;
+      offsets[i] = boost;            //// <<<<
+
       /* Making dynalloc more likely */
       if (boost>0)
          dynalloc_logp = IMAX(2, dynalloc_logp-1);
    }
 
+   ////////////////////////////////////////////////
+   // Decode trim
    ALLOC(fine_quant, nbEBands, int);
    alloc_trim = tell+(6<<BITRES) <= total_bits ?
          ec_dec_icdf(dec, trim_icdf, 7) : 5;
 
+   ////////////////////////////////////////////////
+   // Decode anti collapse bits
    bits = (((opus_int32)len*8)<<BITRES) - ec_tell_frac(dec) - 1;
    anti_collapse_rsv = isTransient&&LM>=2&&bits>=((LM+2)<<BITRES) ? (1<<BITRES) : 0;
    bits -= anti_collapse_rsv;
 
+   ////////////////////////////////////////////////
+   // COMPUTE ALLOCATION
    ALLOC(pulses, nbEBands, int);
    ALLOC(fine_priority, nbEBands, int);
 
@@ -1069,6 +1102,8 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
          alloc_trim, &intensity, &dual_stereo, bits, &balance, pulses,
          fine_quant, fine_priority, C, LM, dec, 0, 0, 0);
 
+   ////////////////////////////////////////////////
+   // CALCULATE FINE ENERGY
    unquant_fine_energy(mode, start, end, oldBandE, fine_quant, dec, C);
 
    c=0; do {
@@ -1109,6 +1144,8 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
          oldBandE[i] = -QCONST16(28.f,DB_SHIFT);
    }
 
+   ////////////////////////////////////////////////////////////////
+   // SYNTHESIS
    celt_synthesis(mode, X, out_syn, oldBandE, start, effEnd,
                   C, CC, isTransient, LM, st->downsample, silence, st->arch);
 

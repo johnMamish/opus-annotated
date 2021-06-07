@@ -1,3 +1,13 @@
+== Opus Annotated  ==
+I'm working on digesting the details of the Opus audio codec, but the
+reference implementation leaves a lot to be desired in terms of readability.
+
+The code in this repo should be functionally identical to the reference
+implementation, but with some clarifying comments. I'm prioritizing annotation
+of the CELT decoder first, specifically:
+  * celt/celt_decoder.c
+  * celt/rate.c
+
 == Opus audio codec ==
 
 Opus is a codec for interactive speech and audio transmission over the Internet.

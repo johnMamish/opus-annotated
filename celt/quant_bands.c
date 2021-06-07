@@ -425,13 +425,33 @@ void quant_energy_finalise(const CELTMode *m, int start, int end, opus_val16 *ol
    }
 }
 
+/**
+ * @param[in]     m          Holds information about how many energy bands there are.
+ * @param[in]     start      Which band index to start at. I think this should always be 0.
+ * @param[in]     end        Which band index to end at. I think this should always be 21.
+ * @param[in,out] oldEBands
+ * @param[in]     intra      boolean that tells whether we're using intra frame coding. Assume to be
+ *                           '1' for now.
+ * @param[in]     dec        Range decoder bitstream
+ * @param[in]     C          Number of channels (assume to be 1)
+ * @param[in]     LM         value in [0, 3] that depends on frame size. Determines probability model
+ *                           and predicition coefficients. We can (probably) assume that it's a
+ *                           constant for simple implementations.
+ */
 void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *oldEBands, int intra, ec_dec *dec, int C, int LM)
 {
+    fprintf("[unquant_coarse_energy] start = %i, end = %i\n", start, end);
+
    const unsigned char *prob_model = e_prob_model[LM][intra];
    int i, c;
+
+   // Holds the predicted value A(z_l, z_b)
    opus_val32 prev[2] = {0, 0};
+
+   // alpha and beta for the prediction filter.
    opus_val16 coef;
    opus_val16 beta;
+
    opus_int32 budget;
    opus_int32 tell;
 
@@ -444,6 +464,9 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
       coef = pred_coef[LM];
    }
 
+   // I think this is the number of bits that comprise the ENTIRE frame. Some cases down there
+   // handle situations where we're still decoding coarse quantization with just 1, 2, or 0 bits
+   // left. Seems unlikely to me that that would ever happen?
    budget = dec->storage*8;
 
    /* Decode at a fixed coarse resolution */
@@ -461,24 +484,36 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
          tell = ec_tell(dec);
          if(budget-tell>=15)
          {
+            // There are 15 or more bits remaining in the WHOLE packet (I expect this to be the
+            // typical case).
             int pi;
-            pi = 2*IMIN(i,20);
+            pi = 2*IMIN(i,20); // ??? 'i' should never be greater than 20 ???
             qi = ec_laplace_decode(dec,
                   prob_model[pi]<<7, prob_model[pi+1]<<6);
          }
          else if(budget-tell>=2)
          {
+            // seems pretty unlikely that we'd ever be in this case.
             qi = ec_dec_icdf(dec, small_energy_icdf, 2);
             qi = (qi>>1)^-(qi&1);
          }
          else if(budget-tell>=1)
          {
+             // or in this one.
             qi = -ec_dec_bit_logp(dec, 1);
          }
          else
             qi = -1;
+
+         // This is the value decoded from the bitstream. I think that it represents the
+         // prediction filter's error.
          q = (opus_val32)SHL32(EXTEND32(qi),DB_SHIFT);
 
+         ////////////////////////////////////////////////////////////////
+         // Calculate the coarse energy value for the i-th band using the prediction filter.
+         // tmp  = alpha * z_l^-1 + z_b^-1 + decoded_error
+         // prev = ???
+         // NEED TO SPEND SOME TIME HERE.
          oldEBands[i+c*m->nbEBands] = MAX16(-QCONST16(9.f,DB_SHIFT), oldEBands[i+c*m->nbEBands]);
          tmp = PSHR32(MULT16_16(coef,oldEBands[i+c*m->nbEBands]),8) + prev[c] + SHL32(q,7);
 #ifdef FIXED_POINT
@@ -486,6 +521,7 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
 #endif
          oldEBands[i+c*m->nbEBands] = PSHR32(tmp, 7);
          prev[c] = prev[c] + SHL32(q,7) - MULT16_16(beta,PSHR32(q,8));
+
       } while (++c < C);
    }
 }

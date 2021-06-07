@@ -39,6 +39,9 @@
 
 #define MAX_PERIOD 1024
 
+/**
+ * PulseCache holds info needed to derive the per-band maximum allocation vector.
+ */
 typedef struct {
    int size;
    const opus_int16 *index;
@@ -53,6 +56,11 @@ struct OpusCustomMode {
    opus_int32 Fs;
    int          overlap;
 
+   /**
+    * eBands contains the start and stop MDCT buckets for each of the pseudo-Bark critical bands.
+    * The values in eBands are determined by LM (which is determined by the number of samples in
+    * the frame) as well as by whether it's a short or long frame.
+    */
    int          nbEBands;
    int          effEBands;
    opus_val16    preemph[4];
@@ -60,14 +68,29 @@ struct OpusCustomMode {
 
    int         maxLM;
    int         nbShortMdcts;
+
+   // mode->shortMdctSize = frame_size/mode->nbShortMdcts;
+   /**
+    * this value holds the
+    */
    int         shortMdctSize;
 
+   /**
+    * allocVectors is a table describing the number of bits in each of the 21 bands. Its values
+    * are taken from table 57 in the RFC. allocVectors is populated in
+    * celt/modes.c:compute_allocation_table() by interpolating a static const array. This the
+    * "interpolation" that's (kind of opaquely) described in section 4.3.3 of RFC 6716.
+    */
    int          nbAllocVectors; /**< Number of lines in the matrix below */
    const unsigned char   *allocVectors;   /**< Number of bits in each band for several rates */
    const opus_int16 *logN;
 
    const opus_val16 *window;
    mdct_lookup mdct;
+
+   /**
+    * PulseCache is defined in this file.
+    */
    PulseCache cache;
 };
 

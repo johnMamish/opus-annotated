@@ -245,6 +245,21 @@ void compute_pulse_cache(CELTMode *m, int LM)
 
 #define ALLOC_STEPS 6
 
+
+/**
+ * Dear god, look at all these args.
+ *
+ * @param[in]     m         CELTMode is #defined to OpusCustomMode; OpusCustomMode is defined in
+ *                          celt/modes.h and contains info about sample frequency, number of bands,
+ *                          bit allocation vectors, and so on.
+ * @param[in]     start     band number to start at, nominally 0
+ * @param[in]     end       band number to end at, nominally 21
+ * @param[in]     skip_start
+ * @param[in]     bits1
+ * @param[in]     bits2
+ * @param[in]     thresh
+ * @param[in]     cap       Per-band maximum allocation vector.
+ */
 static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end, int skip_start,
       const int *bits1, const int *bits2, const int *thresh, const int *cap, opus_int32 total, opus_int32 *_balance,
       int skip_rsv, int *intensity, int intensity_rsv, int *dual_stereo, int dual_stereo_rsv, int *bits,
@@ -529,6 +544,12 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
    return codedBands;
 }
 
+/**
+ * @param[in]     m
+ * @param[in]     start      starting band (typically 0 for CELT-only mode)
+ * @param[in]     end        ending band (typically 21 for full-bandwidth CELT)
+ * @param[in]     offsets
+ */
 int clt_compute_allocation(const CELTMode *m, int start, int end, const int *offsets, const int *cap, int alloc_trim, int *intensity, int *dual_stereo,
       opus_int32 total, opus_int32 *balance, int *pulses, int *ebits, int *fine_priority, int C, int LM, ec_ctx *ec, int encode, int prev, int signalBandwidth)
 {
@@ -591,10 +612,16 @@ int clt_compute_allocation(const CELTMode *m, int start, int end, const int *off
       for (j=end;j-->start;)
       {
          int bitsj;
+
+         // N - number of MDCT buckets in band j
          int N = m->eBands[j+1]-m->eBands[j];
+
+         // bitsj - number of bits in band j for quality q = mid.
          bitsj = C*N*m->allocVectors[mid*len+j]<<LM>>2;
-         if (bitsj > 0)
+         if (bitsj > 0) {
+            // this IMAX is required because trim_offset is typically less than 0.
             bitsj = IMAX(0, bitsj + trim_offset[j]);
+         }
          bitsj += offsets[j];
          if (bitsj >= thresh[j] || done)
          {
@@ -641,4 +668,3 @@ int clt_compute_allocation(const CELTMode *m, int start, int end, const int *off
    RESTORE_STACK;
    return codedBands;
 }
-
