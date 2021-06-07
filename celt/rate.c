@@ -548,7 +548,29 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
  * @param[in]     m
  * @param[in]     start      starting band (typically 0 for CELT-only mode)
  * @param[in]     end        ending band (typically 21 for full-bandwidth CELT)
- * @param[in]     offsets
+ * @param[in]     offsets    Contains number of 1/8 bits to boost bands on a per-band basis
+ * @param[in]     cap        Maximum possible bit allocation per band.
+ * @param[in]     alloc_trim Trim parameter on [0, 10]; values below 5 bias allocation toward
+ *                           lower frequency bands, values above 5 bias allocation toward higher
+ *                           freq bands, 5 is flat allocation.
+ * @param[out]    intensity  **** This one is important. need to figure it out.
+ * @param[out]    dual_stereo  Entropy-coded flag that determines whether there are seperately-
+ *                             coded stereo channels or not.
+ * @param[in]     total      Not sure; I *THINK* this is just the number of 1/8th bits remaining
+ *                           in the frame whose allocation needs to be spread over the bands.
+ * @param[out]    balance    Remaining bits for redistribution after allocation is finished.
+ * @param[out]    pulses     **** this one is important. need to figure it out
+ * @param[out]    ebits      **** this one is important. I think it's the fine energy bit allocation.
+ * @param[out]    fine_priority   **** ???
+ * @param[in]     C          Number of channels. Nominally 1.
+ * @param[in]     LM         one of {0, 1, 2, 3} depending on which of the 4 valid CELT frame sizes
+ *                           is in use. equal to log2((size of this frame) / (size of min size frame))
+ * @param[in,out] ec         The entropy encoder we're trying to work with.
+ * @param[in]     encode     1 for encode, 0 for decode
+ * @param[in]     prev       ???
+ * @param[in]     signalBandwidth ???
+ *
+ * A lot of this function's work happens in interp_bits2pulses().
  */
 int clt_compute_allocation(const CELTMode *m, int start, int end, const int *offsets, const int *cap, int alloc_trim, int *intensity, int *dual_stereo,
       opus_int32 total, opus_int32 *balance, int *pulses, int *ebits, int *fine_priority, int C, int LM, ec_ctx *ec, int encode, int prev, int signalBandwidth)

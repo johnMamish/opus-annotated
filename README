@@ -8,6 +8,14 @@ of the CELT decoder first, specifically:
   * celt/celt_decoder.c
   * celt/rate.c
 
+To run with gdb, I've added an extra 'launch' script
+    opus_demo_w_gdb
+
+I'm compiling with
+    ./autogen.sh
+    ./configure CFLAGS="-O0 -g"
+    make
+
 == Opus audio codec ==
 
 Opus is a codec for interactive speech and audio transmission over the Internet.

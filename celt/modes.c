@@ -176,7 +176,7 @@ static void compute_allocation_table(CELTMode *mode)
       return;
 
    /* Check for standard mode */
-   // ???
+   // N
    if (mode->Fs == 400*(opus_int32)mode->shortMdctSize)
    {
       for (i=0;i<BITALLOC_SIZE*mode->nbEBands;i++)
