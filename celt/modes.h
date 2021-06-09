@@ -60,6 +60,13 @@ struct OpusCustomMode {
     * eBands contains the start and stop MDCT buckets for each of the pseudo-Bark critical bands.
     * The values in eBands are determined by LM (which is determined by the number of samples in
     * the frame) as well as by whether it's a short or long frame.
+    *
+    * e.g. for a 2.5 ms / 120 sample frame (LM = 0), eBands would be:
+    *     {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 34, 40, 48, 60, 78, 100}
+    *
+    * Note that the top 20 MDCT bins are left unused because - while the nominal Opus input sample
+    * rate for fullband (FB) audio is 48ksps, Opus only codes up to 20kHz and throws away the rest
+    * of the frequencies.
     */
    int          nbEBands;
    int          effEBands;
