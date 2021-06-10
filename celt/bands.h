@@ -80,33 +80,36 @@ void measure_norm_mse(const CELTMode *m, float *X, float *X0, float *bandE, floa
 
 void haar1(celt_norm *X, int N0, int stride);
 
-/** Quantisation/encoding of the residual spectrum
- * @param encode flag that indicates whether we're encoding (1) or decoding (0)
- * @param m Mode data
- * @param start First band to process
- * @param end Last band to process + 1
- * @param X Residual (normalised)
- * @param Y Residual (normalised) for second channel (or NULL for mono)
- * @param collapse_masks Anti-collapse tracking mask
- * @param bandE Square root of the energy for each band
- * @param pulses Bit allocation (per band) for PVQ
- * @param shortBlocks Zero for long blocks, non-zero for short blocks
- * @param spread Amount of spreading to use
- * @param dual_stereo Zero for MS stereo, non-zero for dual stereo
- * @param intensity First band to use intensity stereo
- * @param tf_res Time-frequency resolution change
- * @param total_bits Total number of bits that can be used for the frame (including the ones already spent)
- * @param balance Number of unallocated bits
- * @param en Entropy coder state
- * @param LM log2() of the number of 2.5 subframes in the frame
- * @param codedBands Last band to receive bits + 1
- * @param seed Random generator seed
+/**
+ * Quantisation/encoding of the residual spectrum
+ *
+ * @param[in]     encode      flag that indicates whether we're encoding (1) or decoding (0)
+ * @param[in]     m           Mode data
+ * @param[in]     start       First band to process
+ * @param[in]     end         Last band to process + 1
+ * @param[out]    X           Residual (normalised)
+ * @param[out]    Y           Residual (normalised) for second channel (or NULL for mono)
+ * @param[out]    collapse_masks   Anti-collapse tracking mask. Gets passed into anti_collapse()
+ *                                 later on.
+ * @param[out]    bandE       Square root of the energy for each band
+ * @param[in]     pulses      Bit allocation (per band) for PVQ
+ * @param[in]     shortBlocks  Zero for long blocks, non-zero for short blocks
+ * @param[in]     spread      Amount of spreading to use
+ * @param[in]     dual_stereo  Zero for MS stereo, non-zero for dual stereo
+ * @param[in]     intensity    First band to use intensity stereo
+ * @param[in]     tf_res Time-frequency resolution change
+ * @param[in]     total_bits   Total number of bits that can be used for the frame (including the ones already spent)
+ * @param[in]     balance      Number of unallocated bits
+ * @param[in,out] en           Entropy coder state
+ * @param[in]     LM           log2() of the number of 2.5msx subframes in the frame
+ * @param[in]     codedBands   Last band to receive bits + 1
+ * @param[in,out] seed Random generator seed
  * @param arch Run-time architecture (see opus_select_arch())
  */
 void quant_all_bands(int encode, const CELTMode *m, int start, int end,
       celt_norm * X, celt_norm * Y, unsigned char *collapse_masks,
-      const celt_ener *bandE, int *pulses, int shortBlocks, int spread,
-      int dual_stereo, int intensity, int *tf_res, opus_int32 total_bits,
+      const celt_ener *bandE, const int *pulses, int shortBlocks, int spread,
+      int dual_stereo, int intensity, const int *tf_res, opus_int32 total_bits,
       opus_int32 balance, ec_ctx *ec, int M, int codedBands, opus_uint32 *seed,
       int complexity, int arch, int disable_inv);
 

@@ -632,6 +632,9 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
 
    ////////////////////////////////////////////////
    // Split allocated bits between fine energy quantization and PVQ (???)
+   //
+   // Output of this loop is "ebits" and "bits".
+   //
    balance = 0;
    for (j=start;j<codedBands;j++)
    {

@@ -1394,10 +1394,13 @@ static void special_hybrid_folding(const CELTMode *m, celt_norm *norm, celt_norm
       OPUS_COPY(&norm2[n1], &norm2[2*n1 - n2], n2-n1);
 }
 
+/**
+ * .h file has dome docstrings.
+ */
 void quant_all_bands(int encode, const CELTMode *m, int start, int end,
       celt_norm *X_, celt_norm *Y_, unsigned char *collapse_masks,
-      const celt_ener *bandE, int *pulses, int shortBlocks, int spread,
-      int dual_stereo, int intensity, int *tf_res, opus_int32 total_bits,
+      const celt_ener *bandE, const int *pulses, int shortBlocks, int spread,
+      int dual_stereo, int intensity, const int *tf_res, opus_int32 total_bits,
       opus_int32 balance, ec_ctx *ec, int LM, int codedBands,
       opus_uint32 *seed, int complexity, int arch, int disable_inv)
 {
@@ -1669,4 +1672,3 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
 
    RESTORE_STACK;
 }
-
