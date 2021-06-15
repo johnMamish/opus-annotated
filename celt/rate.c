@@ -392,11 +392,40 @@ int search_q_lo(const CELTMode* m, int start, int end, const int* offsets, const
  *                          bit allocation vectors, and so on.
  * @param[in]     start     band number to start at, nominally 0
  * @param[in]     end       band number to end at, nominally 21
- * @param[in]     skip_start
- * @param[in]     bits1
- * @param[in]     bits2
- * @param[in]     thresh
+ * @param[in]     skip_start  Lowest band at which skipping can start (noninclusive). e.g. if
+ *                            skip_start is 7, band 8 is the lowest one which can be skipped. This
+ *                            number helps us determine if skipping bands is worth it or not.
+ *                            (a band is 'skipped' if 0 bits are allocated to its shape).
+ * @param[in]     bits1     (1/8th ?) Bits allocated to each band at highest integer quality q
+ *                          according to table 57 and also incorporating band boosts and tilt.
+ * @param[in]     bits2     (1/8th ?) Bits by which band1 will be exceeded if q is increased by 1.
+ * @param[in]     thresh    Minimum number of bits for which PVQ shape will be encoded.
  * @param[in]     cap       Per-band maximum allocation vector.
+ * @param[in]     total     Number of bits remaining in the frame.
+ * @param[out]    _balance  Returns the number of bits remaining after initial allocation of fine
+ *                          energy and shape.
+ * @param[in]     skip_rsv  Number of bits to give back if no bands are skipped
+ * @param[out]    intensity Returns info related to "intensity stereo" encoding, which I'll ignore
+ *                          for now because I'm trying to focus on mono first.
+ * @param[in]     intensity_rsv  Number of bits that are needed to signal "intensity stereo"
+ *                               encoding.
+ * @param[in,out] dual_stereo  In decoding mode, this returns whether the frame is in "dual stereo"
+ *                             mode; in encoding mode, *dual_stereo signals whether the frame should
+ *                             be encoded in "dual stereo" mode or not.
+ * @param[in]     dual_stereo_rsv  Number of bits needed to signal "dual stereo mode" encoding.
+ * @param[out]    bits      Bits to allocate to shape for each band. Called "pulses" in callers
+ * @param[out]    ebits     Bits to allocate to energy for each band.
+ * @param[out]    fine_priority  Tells which bands should be given first priority when distributing
+ *                               extra bits to fine energy quantization, according to rfc6716 4.3.2.2
+ * @param[in]     C         Number of channels
+ * @param[in]     LM        LM is 0, 1, 2, or 3 for frames of size 120, 240, 480, and 960 respectively.
+ * @param[in,out] ec        The entropy coder.
+ * @param[in]     prev      Holds the previous number of bands which were not skipped (i.e. whose
+ *                          shape was coded) so that some hystersis can be added to band skipping.
+ * @param[in]     signalBandwidth  Allows skipping of some higher-frequency computation. This
+ *                                 parameter appears to be unused and is left to set 0 in all the
+ *                                 places where interp_bits2pulses() gets called, effectively
+ *                                 disabling it.
  */
 static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end, int skip_start,
       const int *bits1, const int *bits2, const int *thresh, const int *cap, opus_int32 total, opus_int32 *_balance,
@@ -650,11 +679,12 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
 
       if (N>1)
       {
+         // what the hell is this? It's a real convoluted way to say
+         // bits[j] = ((bits[j] + balance) > cap[j]) ? cap[j] : (bits[j] + balance);
          excess = MAX32(bit-cap[j],0);
          bits[j] = bit-excess;
 
          /* Compensate for the extra DoF in stereo */
-         //
          den = C*N;
          if ((C==2 && N>2 && !*dual_stereo && j<*intensity) ? 1 : 0) {
              den++;
@@ -697,6 +727,11 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
 
       } else {
          /* For N=1, all bits go to fine energy except for a single sign bit */
+         // ??? That's not what it looks like this code does. I think that it should be
+         //   ebits[j] = bit - excess;
+         //   bits[j] = 0
+         // bit idk!!! Maybe it doesn't matter because later steps will know that a band with
+         // N = 1 doesn't need any shape bits.
          excess = MAX32(0,bit-(C<<BITRES));
          bits[j] = bit-excess;
          ebits[j] = 0;
@@ -747,22 +782,36 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
  * @param[in]     alloc_trim Trim parameter on [0, 10]; values below 5 bias allocation toward
  *                           lower frequency bands, values above 5 bias allocation toward higher
  *                           freq bands, 5 is flat allocation.
- * @param[out]    intensity  **** This one is important. need to figure it out.
+ * @param[out]    intensity  Entropy-coded flag that determines whether there are "intensity
+ *                           stereo" coded stereo channels or not.
  * @param[out]    dual_stereo  Entropy-coded flag that determines whether there are seperately-
  *                             coded stereo channels or not.
  * @param[in]     total      Not sure; I *THINK* this is just the number of 1/8th bits remaining
  *                           in the frame whose allocation needs to be spread over the bands.
  * @param[out]    balance    Remaining bits for redistribution after allocation is finished.
- * @param[out]    pulses     **** this one is important. need to figure it out
- * @param[out]    ebits      **** this one is important. I think it's the fine energy bit allocation.
- * @param[out]    fine_priority   **** ???
+ * @param[out]    pulses     Bits to allocate to shape for each band. Calculated by
+ *                           interp_bits2pulses()
+ * @param[out]    ebits      Bits to allocate to energy for each band. Calculated by
+ *                           interp_bits2pulses()
+ * @param[out]    fine_priority  After all the other allocation steps are complete, any remaining
+ *                               bits are distributed to the different bands for their fine energy
+ *                               quantization. Starting from band 0, bands with a 'fine priority' of
+ *                               0 get a bit first, followed by bands with a 'fine priority' of 1.
+ *                               Leftover bits are unused. This is described in 4.3.2.2. The
+ *                               details of how prioritization happens are implemented in
+ *                               interp_bits2pulses.
  * @param[in]     C          Number of channels. Nominally 1.
  * @param[in]     LM         one of {0, 1, 2, 3} depending on which of the 4 valid CELT frame sizes
  *                           is in use. equal to log2((size of this frame) / (size of min size frame))
  * @param[in,out] ec         The entropy encoder we're trying to work with.
  * @param[in]     encode     1 for encode, 0 for decode
- * @param[in]     prev       ???
- * @param[in]     signalBandwidth ???
+ * @param[in]     prev       Passed down to interp_bits2pulses, should contain the previous number of
+ *                           bands which were not skipped (i.e. whose shape was coded) so that some
+ *                           hystersis can be added to band skipping.
+ * @param[in]     signalBandwidth  Allows skipping of some higher-frequency computation. This
+ *                                 parameter appears to be unused and is left to set 0 in all the
+ *                                 places where clt_compute_allocation() is called, effectively
+ *                                 disabling it.
  *
  * A lot of this function's work happens in interp_bits2pulses().
  */

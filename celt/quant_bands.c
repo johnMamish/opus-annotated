@@ -549,11 +549,15 @@ void unquant_fine_energy(const CELTMode *m, int start, int end, opus_val16 *oldE
    }
 }
 
+/**
+ * Decodes any extra "unused" bits that were allocated for fine energy quantization.
+ */
 void unquant_energy_finalise(const CELTMode *m, int start, int end, opus_val16 *oldEBands, int *fine_quant,  int *fine_priority, int bits_left, ec_dec *dec, int C)
 {
    int i, prio, c;
 
    /* Use up the remaining bits */
+   // Described in section 4.3.2.2
    for (prio=0;prio<2;prio++)
    {
       for (i=start;i<end && bits_left>=C ;i++)

@@ -192,7 +192,15 @@ void normalise_bands(const CELTMode *m, const celt_sig * OPUS_RESTRICT freq, cel
 
 #endif /* FIXED_POINT */
 
-/* De-normalise the energy to produce the synthesis from the unit-energy bands */
+/**
+ * Denormalise each band of X to restore full amplitude
+ * @param[in]     m         Mode data
+ * @param[in]     X         Spectrum (returned de-normalised (how? It's marked const!!))
+ * @param[in]     bandLogE  Energy of the bands as calculated by
+ * @param[in]     bandE Square root of the energy for each band
+ *
+ * De-normalise the energy to produce the synthesis from the unit-energy bands
+ */
 void denormalise_bands(const CELTMode *m, const celt_norm * OPUS_RESTRICT X,
       celt_sig * OPUS_RESTRICT freq, const opus_val16 *bandLogE, int start,
       int end, int M, int downsample, int silence)
@@ -937,10 +945,15 @@ static unsigned quant_band_n1(struct band_ctx *ctx, celt_norm *X, celt_norm *Y, 
    return 1;
 }
 
-/* This function is responsible for encoding and decoding a mono partition.
-   It can split the band in two and transmit the energy difference with
-   the two half-bands. It can be called recursively so bands can end up being
-   split in 8 parts. */
+/**
+ * This function is responsible for encoding and decoding a mono partition. It can split the band in
+ * two and transmit the energy difference with the two half-bands. It can be called recursively so
+ * bands can end up being split in 8 parts.
+ *
+ * THIS IS WHERE PVQ DECODING HAPPENS.
+ *
+ * Note section 4.3.4.4 "split decoding".
+ */
 static unsigned quant_partition(struct band_ctx *ctx, celt_norm *X,
       int N, int b, int B, celt_norm *lowband,
       int LM,
@@ -1053,9 +1066,13 @@ static unsigned quant_partition(struct band_ctx *ctx, celt_norm *X,
       {
          int K = get_pulses(q);
 
-         /* Finally do the actual quantization */
+         ////////////////////////////////////////////////
+         // THIS IS WHERE PVQ HAPPENS
+         // PVQ is alg_quant() / alg_unquant()
          if (encode)
          {
+            ////////////////////////////////////////////////
+            // THIS IS THE PVQ AREA. IT IS alg_quant().
             cm = alg_quant(X, N, K, spread, B, ec, gain, ctx->resynth, ctx->arch);
          } else {
             cm = alg_unquant(X, N, K, spread, B, ec, gain);
@@ -1395,7 +1412,35 @@ static void special_hybrid_folding(const CELTMode *m, celt_norm *norm, celt_norm
 }
 
 /**
- * .h file has dome docstrings.
+ * Quantisation/encoding of the residual spectrum.
+ *
+ * Looks like this is a big misuse of the word "residual". "un-normalized" would probably be a
+ * better word.
+ *
+ * Decode
+ *
+ * @param[in]     encode      flag that indicates whether we're encoding (1) or decoding (0)
+ * @param[in]     m           Mode data
+ * @param[in]     start       First band to process
+ * @param[in]     end         Last band to process + 1
+ * @param[out]    X           Residual (normalised). (aka the spectrum, but still normalized).
+ * @param[out]    Y           Residual (normalised) for second channel (or NULL for mono)
+ * @param[out]    collapse_masks   Anti-collapse tracking mask. Gets passed into anti_collapse()
+ *                                 later on.
+ * @param[out]    bandE       Square root of the energy for each band
+ * @param[in]     pulses      Bit allocation (per band) for PVQ
+ * @param[in]     shortBlocks  Zero for long blocks, non-zero for short blocks
+ * @param[in]     spread      Amount of spreading to use
+ * @param[in]     dual_stereo  Zero for MS stereo, non-zero for dual stereo
+ * @param[in]     intensity    First band to use intensity stereo
+ * @param[in]     tf_res Time-frequency resolution change
+ * @param[in]     total_bits   Total number of bits that can be used for the frame (including the ones already spent)
+ * @param[in]     balance      Number of unallocated bits
+ * @param[in,out] en           Entropy coder state
+ * @param[in]     LM           log2() of the number of 2.5msx subframes in the frame
+ * @param[in]     codedBands   Last band to receive bits + 1
+ * @param[in,out] seed Random generator seed
+ * @param arch Run-time architecture (see opus_select_arch())
  */
 void quant_all_bands(int encode, const CELTMode *m, int start, int end,
       celt_norm *X_, celt_norm *Y_, unsigned char *collapse_masks,
@@ -1573,6 +1618,10 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
       }
       if (dual_stereo)
       {
+         ////////////////////////////////////////////////
+         // PVQ DECODING HAPPENS HERE?
+         // for dual stereo, where 2 totally seperate stereo channels are shape-encoded one after
+         // the other.
          x_cm = quant_band(&ctx, X, N, b/2, B,
                effective_lowband != -1 ? norm+effective_lowband : NULL, LM,
                last?NULL:norm+M*eBands[i]-norm_offset, Q15ONE, lowband_scratch, x_cm);
@@ -1652,6 +1701,8 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
                      last?NULL:norm+M*eBands[i]-norm_offset, lowband_scratch, x_cm|y_cm);
             }
          } else {
+            ////////////////////////////////////////////////
+            // MONO PVQ DECODING HAPPENS HERE
             x_cm = quant_band(&ctx, X, N, b, B,
                   effective_lowband != -1 ? norm+effective_lowband : NULL, LM,
                   last?NULL:norm+M*eBands[i]-norm_offset, Q15ONE, lowband_scratch, x_cm|y_cm);

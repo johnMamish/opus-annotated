@@ -366,6 +366,10 @@ void deemphasis(celt_sig *in[], opus_val16 *pcm, int N, int C, int downsample, c
 #ifndef RESYNTH
 static
 #endif
+
+/**
+ *
+ */
 void celt_synthesis(const CELTMode *mode, celt_norm *X, celt_sig * out_syn[],
                     opus_val16 *oldBandE, int start, int effEnd, int C, int CC,
                     int isTransient, int LM, int downsample,
@@ -1121,6 +1125,8 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
    ALLOC(X, C*N, celt_norm);   /**< Interleaved normalised MDCTs */
 #endif
 
+   ////////////////////////////////////////////////
+   // DECODE BAND SHAPES
    quant_all_bands(0, mode, start, end, X, C==2 ? X+N : NULL, collapse_masks,
          NULL, pulses, shortBlocks, spread_decision, dual_stereo, intensity, tf_res,
          len*(8<<BITRES)-anti_collapse_rsv, balance, dec, LM, codedBands, &st->rng, 0,
@@ -1131,6 +1137,8 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
       anti_collapse_on = ec_dec_bits(dec, 1);
    }
 
+   ////////////////////////////////////////////////
+   //
    unquant_energy_finalise(mode, start, end, oldBandE,
          fine_quant, fine_priority, len*8-ec_tell(dec), dec, C);
 
@@ -1146,6 +1154,11 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
 
    ////////////////////////////////////////////////////////////////
    // SYNTHESIS
+   // Noe that the ragne coder isn't passed into celt_synthesis; I think that all of the
+   // decoding is already done at this point.
+   // Some questions:
+   //    * Where were energies decoded??
+   //    * Where were shapes decoded?
    celt_synthesis(mode, X, out_syn, oldBandE, start, effEnd,
                   C, CC, isTransient, LM, st->downsample, silence, st->arch);
 
