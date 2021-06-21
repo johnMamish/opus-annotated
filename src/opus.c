@@ -176,12 +176,16 @@ int opus_packet_get_samples_per_frame(const unsigned char *data,
    int audiosize;
    if (data[0]&0x80)
    {
+      // frame is CELT
       audiosize = ((data[0]>>3)&0x3);
       audiosize = (Fs<<audiosize)/400;
-   } else if ((data[0]&0x60) == 0x60)
+   }
+   else if ((data[0]&0x60) == 0x60)
    {
+      // frame is hybrid
       audiosize = (data[0]&0x08) ? Fs/50 : Fs/100;
    } else {
+      // frame is SILK
       audiosize = ((data[0]>>3)&0x3);
       if (audiosize == 3)
          audiosize = Fs*60/1000;
@@ -353,4 +357,3 @@ int opus_packet_parse(const unsigned char *data, opus_int32 len,
    return opus_packet_parse_impl(data, len, 0, out_toc,
                                  frames, size, payload_offset, NULL);
 }
-

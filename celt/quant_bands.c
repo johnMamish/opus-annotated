@@ -487,7 +487,7 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
             // There are 15 or more bits remaining in the WHOLE packet (I expect this to be the
             // typical case).
             int pi;
-            pi = 2*IMIN(i,20); // ??? 'i' should never be greater than 20 ???
+            pi = 2*IMIN(i,20);     // the IMIN seems unnecessary; 'i' will never be > 20 anyways.
             qi = ec_laplace_decode(dec,
                   prob_model[pi]<<7, prob_model[pi+1]<<6);
          }
