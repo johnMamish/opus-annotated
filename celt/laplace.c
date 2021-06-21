@@ -40,54 +40,145 @@
     direction). */
 #define LAPLACE_NMIN (16)
 
-/* When called, decay is positive and at most 11456. */
+/**
+ * This file implements opus's laplace-like distribution which is used to generate PDFs for range-
+ * coding of Opus's coarse energy symbols.
+ *
+ * There's one coarse energy symbol for each band and each coarse energy symbol has two parameters
+ * which implicitly define its PDF - "0 frequency" ("fs0") and "decay". The PDF that's derived
+ * from these symbols consists of two geometric-like distributions, one on [1, inf) and decaying
+ * with positive x and on [-1, -inf) and decaying with negative x.
+ *
+ *        "probability axis"
+ *         ^
+ *         x  <--- fs0
+ *         |
+ *         |
+ *       x | x  <--- (1/2) * (1 - fs0 - (2 * guaranteed tail)) * (1 - decay) = freq1
+ *   x x   |   x x
+ * x       |       x x x x ....
+ * --------|--------------------------->   "value axis"
+ *         |
+ * <-----|   |---------> geometric distribution
+ *
+ * p(n) = freq1 * (decay ^ (|n| - 1)) (for |n| > 1)
+ *
+ * These geometric distributions are scaled such that each one has a cumulative probability of
+ *     (1/2) * (1 - fs0)
+ * and each one decays with
+ *     p = "decay".
+ *
+ * Once the distribution's probability falls below a certain value (LAPLACE_MINP), the remainder
+ * of the distribution consists LAPLACE_MINP until the cumulative value of the distribution reaches
+ * '1'.
+ */
+
+/**
+ * ec_laplace_{encode,decode} approximates a discrete laplace distribution; it uses fs0 as the
+ * probability of getting a 0 and then has 2 geometric distributions going to either side with
+ * 'p' = decay.
+ *
+ * Note that the comments above 'e_prob_model' in quant_bands.c say "Laplace-Like" distribution.
+ * To get a truly laplace-like distribution, f0 and decay would have to both be determined by a
+ * single parameter.
+ *
+ * @param[in]     fs0        Q15 number representing the probability of a 0.
+ * @param[in]     decay      'decay' is a Q14 number that should be positive and at most 11456.
+ *                           This represents the 'p' parameter in a geometric distribution.
+ */
 static unsigned ec_laplace_get_freq1(unsigned fs0, int decay)
 {
    unsigned ft;
-   ft = 32768 - LAPLACE_MINP*(2*LAPLACE_NMIN) - fs0;
-   return ft*(opus_int32)(16384-decay)>>15;
+
+   // ft = 1 - (minp * (2 * nmin)) - fs0
+   // ft contains the cumulative probability of all values except 0 and the "tails"
+   // on either side with laplace_minprob.
+   ft = 32768 - LAPLACE_MINP * (2 * LAPLACE_NMIN) - fs0;
+
+   // need to divide ft * (1 - decay) by 2 because ft spans in both the positive and negative
+   // directions.
+   return (ft * ((opus_int32)(16384 - decay)) / 2) >> 14;
 }
 
+/**
+ * This function uses two geometric distributions to discretely approximate a laplace distribution.
+ *
+ * Once the value of
+ *
+ * @param[in,out] enc        Entropy encoder to add the value to
+ * @param[in,out] value      Pointer to value that should be encoded.
+ * @param[in]     fs         Probablity of 0 represented in Q15 format.
+ * @param[in]     decay      Decay parameter, represented in Q14 format.
+ */
 void ec_laplace_encode(ec_enc *enc, int *value, unsigned fs, int decay)
 {
    unsigned fl;
    int val = *value;
    fl = 0;
+
+   // We need to determine fl and fs for the symbol we want to encode.
+   // Inside this 'if' statement, we consider symbols one by one increasing from 1 until the laplace
+   // distribution starts flooring to 0.
+   //   * fl contains the cumulative probability of all buckets which have been ruled out so far.
+   //   * fs contains the probability of the bucket currently under consideration.
+   //   *
    if (val)
    {
-      int s;
+      int s = 0;
+      if (val < 0) {
+          s = -1;
+          val = -val;
+      }
+
+      // If the value is 0,
       int i;
-      s = -(val<0);
-      val = (val+s)^s;
+
+      // scoot
       fl = fs;
       fs = ec_laplace_get_freq1(fs, decay);
+
       /* Search the decaying part of the PDF.*/
-      for (i=1; fs > 0 && i < val; i++)
+      // scoot fl forward until until we find the value we want or we hit the end of the curve.
+      for (i = 1; (fs >= LAPLACE_MINP) && (i < val); i++)
       {
-         fs *= 2;
-         fl += fs+2*LAPLACE_MINP;
-         fs = (fs*(opus_int32)decay)>>15;
+         // we need to multiply fs by 2 because we have to consider both positive and negative
+         // sides of the curve (right?)
+         fl += 2 * (fs + LAPLACE_MINP);
+
+         // fs[i] = fs * (decay^i)
+         // decay is a Q0.14 number, fs is a Q0.15 number; to renormalize to a Q15 number, we need to
+         // shift by 14.
+         fs = (fs * (opus_int32)decay) >> 14;
       }
-      /* Everything beyond that has probability LAPLACE_MINP. */
-      if (!fs)
+
+      if (fs < LAPLACE_MINP)
       {
-         int di;
+         // val is in a bucket with probability LAPLACE_MINP
+         // ndi_max is number of buckets over which the remaining probability is divided.
          int ndi_max;
-         ndi_max = (32768-fl+LAPLACE_MINP-1)>>LAPLACE_LOG_MINP;
-         ndi_max = (ndi_max-s)>>1;
-         di = IMIN(val - i, ndi_max - 1);
+         ndi_max = (32768 - fl + LAPLACE_MINP - 1) >> LAPLACE_LOG_MINP;
+         ndi_max = (ndi_max - s) >> 1;
+
+         // If
+         int di = IMIN(val - i, ndi_max - 1);
+
+         //
          fl += (2*di+1+s)*LAPLACE_MINP;
          fs = IMIN(LAPLACE_MINP, 32768-fl);
          *value = (i+di+s)^s;
       }
       else
       {
+         // val is not in a bucket w probability LAPLACE_MINP
+         // nudge fs up by
          fs += LAPLACE_MINP;
          fl += fs&~s;
       }
       celt_assert(fl+fs<=32768);
       celt_assert(fs>0);
    }
+
+   printf("encoding value %i with (fl, fs) = (%i, %i)\n", *value, fl, fs);
    ec_encode_bin(enc, fl, fl+fs, 15);
 }
 
@@ -103,15 +194,17 @@ int ec_laplace_decode(ec_dec *dec, unsigned fs, int decay)
       val++;
       fl = fs;
       fs = ec_laplace_get_freq1(fs, decay)+LAPLACE_MINP;
+
       /* Search the decaying part of the PDF.*/
       while(fs > LAPLACE_MINP && fm >= fl+2*fs)
       {
          fs *= 2;
          fl += fs;
-         fs = ((fs-2*LAPLACE_MINP)*(opus_int32)decay)>>15;
+         fs = ((fs - (2 * LAPLACE_MINP)) * (opus_int32)decay) >> 15;
          fs += LAPLACE_MINP;
          val++;
       }
+
       /* Everything beyond that has probability LAPLACE_MINP. */
       if (fs <= LAPLACE_MINP)
       {
