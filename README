@@ -16,6 +16,14 @@ I'm compiling with
     ./configure CFLAGS="-O0 -g"
     make
 
+Some branches of this project might have some small functional differences from
+the reference implementation.
+    * feature-disable
+      This branch tracks master, but some encoding features in opus_demo can be
+      disabled via command-line option. If these command line options are ignored,
+      functionality should be identical to master.
+
+
 # Output file format
 Typically, opus files are contained in an ogg container, but `opus_demo`
 uses an undocumented format. It's just the following structure repeated
