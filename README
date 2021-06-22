@@ -1,4 +1,4 @@
-== Opus Annotated  ==
+# Opus Annotated
 I'm working on digesting the details of the Opus audio codec, but the
 reference implementation leaves a lot to be desired in terms of readability.
 
@@ -15,6 +15,17 @@ I'm compiling with
     ./autogen.sh
     ./configure CFLAGS="-O0 -g"
     make
+
+# Output file format
+Typically, opus files are contained in an ogg container, but `opus_demo`
+uses an undocumented format. It's just the following structure repeated
+over and over.
+
+    {
+        big endian uint32_t frame_length
+        big endian uint32_t final_rng_value
+        uint8_t frame_data[frame_length]
+    }
 
 == Opus audio codec ==
 

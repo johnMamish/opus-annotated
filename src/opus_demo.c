@@ -744,17 +744,24 @@ int main(int argc, char *argv[])
 #endif
         if (encode_only)
         {
+            // The container format consists of a big-endian number giving the length of the
+            // following frame (encoded here)
             unsigned char int_field[4];
             int_to_char(len[toggle], int_field);
             if (fwrite(int_field, 1, 4, fout) != 4) {
                fprintf(stderr, "Error writing.\n");
                goto failure;
             }
+
+            // And also the ending value of 'rng' in the range encoder, presumably for sanity
+            // checking during decoding.
             int_to_char(enc_final_range[toggle], int_field);
             if (fwrite(int_field, 1, 4, fout) != 4) {
                fprintf(stderr, "Error writing.\n");
                goto failure;
             }
+
+            // The data is written to the file here.
             if (fwrite(data[toggle], 1, len[toggle], fout) != (unsigned)len[toggle]) {
                fprintf(stderr, "Error writing.\n");
                goto failure;
