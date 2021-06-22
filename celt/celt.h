@@ -131,6 +131,10 @@ typedef struct {
 #define CELT_SET_SILK_INFO_REQUEST    10028
 #define CELT_SET_SILK_INFO(x) CELT_SET_SILK_INFO_REQUEST, __celt_check_silkinfo_ptr(x)
 
+/* extra control signals */
+#define CELT_FORCE_INTRA_REQUEST 20002
+#define CELT_DISABLE_PF_REQUEST  20004
+
 /* Encoder stuff */
 
 int celt_encoder_get_size(int channels);

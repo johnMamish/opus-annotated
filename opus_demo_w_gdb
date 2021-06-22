@@ -114,7 +114,7 @@ func_exec_program_core ()
         $ECHO "opus_demo:opus_demo:$LINENO: newargv[0]: $progdir/$program" 1>&2
         func_lt_dump_args ${1+"$@"} 1>&2
       fi
-      gdb --args "$progdir/$program" ${1+"$@"}
+      LD_LIBRARY_PATH="./.libs" gdb --args "$progdir/$program" ${1+"$@"}
 
       $ECHO "$0: cannot exec $program $*" 1>&2
       exit 1

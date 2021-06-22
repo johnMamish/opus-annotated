@@ -67,6 +67,9 @@ struct OpusCustomEncoder {
    int upsample;
    int start, end;
 
+   int user_force_intra;
+   int user_disable_pf;
+
    opus_int32 bitrate;
    int vbr;
    int signalling;
@@ -2444,6 +2447,9 @@ int opus_custom_encoder_ctl(CELTEncoder * OPUS_RESTRICT st, int request, ...)
             goto bad_arg;
          st->disable_pf = value<=1;
          st->force_intra = value==0;
+
+         if (st->user_disable_pf) st->disable_pf = 1;
+         if (st->user_force_intra) st->force_intra = 1;
       }
       break;
       case OPUS_SET_PACKET_LOSS_PERC_REQUEST:
@@ -2591,6 +2597,16 @@ int opus_custom_encoder_ctl(CELTEncoder * OPUS_RESTRICT st, int request, ...)
       {
           opus_val16 *value = va_arg(ap, opus_val16*);
           st->energy_mask = value;
+      }
+      break;
+      case CELT_FORCE_INTRA_REQUEST:
+      {
+          st->user_force_intra = 1;
+      }
+      break;
+      case CELT_DISABLE_PF_REQUEST:
+      {
+          st->user_disable_pf = 1;
       }
       break;
       default:

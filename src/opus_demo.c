@@ -60,6 +60,8 @@ void print_usage( char* argv[] )
     fprintf(stderr, "-max_payload <bytes> : maximum payload size in bytes, default: 1024\n" );
     fprintf(stderr, "-complexity <comp>   : complexity, 0 (lowest) ... 10 (highest); default: 10\n" );
     fprintf(stderr, "-inbandfec           : enable SILK inband FEC\n" );
+    fprintf(stderr, "-celt_force_intra    : all CELT frames will be forced to be intra-frames. No inter-frames will be generated\n" );
+    fprintf(stderr, "-celt_disable_pf     : CELT post-filtering will be force disabled\n" );
     fprintf(stderr, "-forcemono           : force mono encoding, even for stereo input\n" );
     fprintf(stderr, "-dtx                 : enable SILK DTX\n" );
     fprintf(stderr, "-loss <perc>         : simulate packet loss, in percent (0-100); default: 0\n" );
@@ -264,6 +266,9 @@ int main(int argc, char *argv[])
     int variable_duration=OPUS_FRAMESIZE_ARG;
     int delayed_decision=0;
     int ret = EXIT_FAILURE;
+
+    int disable_pf = 0;
+    int force_intra = 0;
 
     if (argc < 5 )
     {
@@ -473,6 +478,12 @@ int main(int argc, char *argv[])
             mode_list = celt_hq_test;
             nb_modes_in_list = 4;
             args++;
+        } else if ( strcmp( argv[ args ], "-celt_force_intra") == 0 ) {
+            force_intra = 1;
+            args++;
+        } else if ( strcmp( argv[ args ], "-celt_disable_pf") == 0) {
+            disable_pf = 1;
+            args++;
         } else {
             printf( "Error: unrecognized setting: %s\n\n", argv[ args ] );
             print_usage( argv );
@@ -537,6 +548,15 @@ int main(int argc, char *argv[])
        opus_encoder_ctl(enc, OPUS_GET_LOOKAHEAD(&skip));
        opus_encoder_ctl(enc, OPUS_SET_LSB_DEPTH(16));
        opus_encoder_ctl(enc, OPUS_SET_EXPERT_FRAME_DURATION(variable_duration));
+
+       if (force_intra) {
+           int ret = opus_encoder_ctl(enc, CELT_FORCE_INTRA_REQUEST);
+           printf("%i\n", ret);
+       }
+       if (disable_pf) {
+           int ret = opus_encoder_ctl(enc, CELT_DISABLE_PF_REQUEST);
+           printf("%i\n", ret);
+       }
     }
     if (!encode_only)
     {

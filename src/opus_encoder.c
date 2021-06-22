@@ -2755,6 +2755,16 @@ int opus_encoder_ctl(OpusEncoder *st, int request, ...)
            ret = celt_encoder_ctl(celt_enc, CELT_GET_MODE(value));
         }
         break;
+        case CELT_FORCE_INTRA_REQUEST:
+        {
+            ret = celt_encoder_ctl(celt_enc, CELT_FORCE_INTRA_REQUEST);
+        }
+        break;
+        case CELT_DISABLE_PF_REQUEST:
+        {
+            ret = celt_encoder_ctl(celt_enc, CELT_DISABLE_PF_REQUEST);
+        }
+        break;
         default:
             /* fprintf(stderr, "unknown opus_encoder_ctl() request: %d", request);*/
             ret = OPUS_UNIMPLEMENTED;
