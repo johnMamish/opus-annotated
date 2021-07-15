@@ -38,6 +38,7 @@
 #include "mathops.h"
 #include "stack_alloc.h"
 #include "rate.h"
+#include <stdio.h>
 
 #ifdef FIXED_POINT
 /* Mean energy in each band quantized in Q4 */
@@ -200,6 +201,8 @@ static int quant_coarse_energy_impl(const CELTMode *m, int start, int end,
          f = x-coef*oldE-prev[c];
          /* Rounding to nearest integer here is really important! */
          qi = (int)floor(.5f+f);
+         printf("[quant_coarse_energy_impl] encoding coarse energy value %f using residual %i\n",
+                x, qi);
          decay_bound = MAX16(-QCONST16(28.f,DB_SHIFT), oldEBands[i+c*m->nbEBands]) - max_decay;
 #endif
          /* Prevent the energy from going down too quickly (e.g. for bands
@@ -440,7 +443,7 @@ void quant_energy_finalise(const CELTMode *m, int start, int end, opus_val16 *ol
  */
 void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *oldEBands, int intra, ec_dec *dec, int C, int LM)
 {
-    fprintf("[unquant_coarse_energy] start = %i, end = %i\n", start, end);
+   fprintf(stderr, "[unquant_coarse_energy] start = %i, end = %i\n", start, end);
 
    const unsigned char *prob_model = e_prob_model[LM][intra];
    int i, c;
@@ -475,13 +478,13 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
       c=0;
       do {
          int qi;
-         opus_val32 q;
          opus_val32 tmp;
          /* It would be better to express this invariant as a
             test on C at function entry, but that isn't enough
             to make the static analyzer happy. */
          celt_sig_assert(c<2);
          tell = ec_tell(dec);
+         fprintf(stderr, "[unquant_coarse_energy] band %i: %i / %i b left\n", i, tell, budget);
          if(budget-tell>=15)
          {
             // There are 15 or more bits remaining in the WHOLE packet (I expect this to be the
@@ -507,7 +510,7 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
 
          // This is the value decoded from the bitstream. I think that it represents the
          // prediction filter's error.
-         q = (opus_val32)SHL32(EXTEND32(qi),DB_SHIFT);
+         const opus_val32 q = (opus_val32)SHL32(EXTEND32(qi),DB_SHIFT);
 
          ////////////////////////////////////////////////////////////////
          // Calculate the coarse energy value for the i-th band using the prediction filter.
@@ -520,6 +523,11 @@ void unquant_coarse_energy(const CELTMode *m, int start, int end, opus_val16 *ol
          tmp = MAX32(-QCONST32(28.f, DB_SHIFT+7), tmp);
 #endif
          oldEBands[i+c*m->nbEBands] = PSHR32(tmp, 7);
+
+         //fprintf(stderr, "[unquant_coarse_energy] band %i: decoded value %i\n", i, oldEBands[i+c*m->nbEBands]);
+         fprintf(stderr, "[unquant_coarse_energy] band %i: decoded residual: %i, decoded energy: %f\n",
+                 i, qi, oldEBands[i+c*m->nbEBands]);
+
          prev[c] = prev[c] + SHL32(q,7) - MULT16_16(beta,PSHR32(q,8));
 
       } while (++c < C);
@@ -536,6 +544,7 @@ void unquant_fine_energy(const CELTMode *m, int start, int end, opus_val16 *oldE
          continue;
       c=0;
       do {
+          fprintf(stderr, "[unquant_fine_energy] band %i: energy before decoding %f\n", i, oldEBands[i+c*m->nbEBands]);
          int q2;
          opus_val16 offset;
          q2 = ec_dec_bits(dec, fine_quant[i]);

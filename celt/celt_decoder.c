@@ -462,14 +462,24 @@ static void tf_decode(int start, int end, int isTransient, int *tf_res, int LM, 
 
    budget = dec->storage*8;
    tell = ec_tell(dec);
+
+   // Section 4.3.4.5: For the first band coded, the PDF is {3, 1}/4 for frames marked as transient
+   // and {15, 1}/16 for the other frames.
    logp = isTransient ? 2 : 4;
+
+   // tf_select is only decoded if it can have an impact on the result; if LM == 0 (tf_select = 1
+   // doesn't do anything for 2.5ms / 120 sample frames) or if our budget would get busted by
+   // decoding tf_select, we know right now that we don't decode it.
    tf_select_rsv = LM>0 && tell+logp+1<=budget;
    budget -= tf_select_rsv;
+
+   // tf_changed is set to 1 after the for loop if tf was changed at all.
    tf_changed = curr = 0;
    for (i=start;i<end;i++)
    {
       if (tell+logp<=budget)
       {
+         // invert 'curr' if a '1' is decoded???... That's not what the RFC seems to imply.
          curr ^= ec_dec_bit_logp(dec, logp);
          tell = ec_tell(dec);
          tf_changed |= curr;
@@ -477,15 +487,21 @@ static void tf_decode(int start, int end, int isTransient, int *tf_res, int LM, 
       tf_res[i] = curr;
       logp = isTransient ? 4 : 5;
    }
+
+   // Decode tf_select.
+   // Section 4.3.1: The tf_select flag uses a 1/2 probability, but is only decoded if it can have
+   // an impact on the result knowing the value of all per-band tf_change flags.
    tf_select = 0;
    if (tf_select_rsv &&
-     tf_select_table[LM][4*isTransient+0+tf_changed] !=
-     tf_select_table[LM][4*isTransient+2+tf_changed])
+       tf_select_table[LM][4*isTransient+0+tf_changed] !=   // tf_change for tf_selct = 0
+       tf_select_table[LM][4*isTransient+2+tf_changed])     // tf_change for tf_select = 1
    {
+      // tf_select was worth decoding, so do it.
       tf_select = ec_dec_bit_logp(dec, 1);
    }
    for (i=start;i<end;i++)
    {
+      //
       tf_res[i] = tf_select_table[LM][4*isTransient+2*tf_select+tf_res[i]];
    }
 }
@@ -1040,10 +1056,20 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
    if (tell+4 <= total_bits)
       spread_decision = ec_dec_icdf(dec, spread_icdf, 5);
 
+   printf("spread decision: %i\n", spread_decision);
+
    ////////////////////////////////////////////////
    // Calculate the "per-band maximum allocation vector" from PulseCache mode->cache.
    ALLOC(cap, nbEBands, int);
    init_caps(mode,cap,LM,C);
+
+   ////////////////////////////////////////////////
+   // debug: print the bark band boundaries.
+   printf("Band boundaries: ");
+   for (i = start; i < end; i++) {
+       printf("% 3i, ", mode->eBands[i]);
+   }
+   printf("\n");
 
    ////////////////////////////////////////////////
    // Decode boost bits and store them in 'offsets'
@@ -1059,24 +1085,55 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
       int width, quanta;
       int dynalloc_loop_logp;
       int boost;
+
+      // width - number of samples in band i.
       width = C*(eBands[i+1]-eBands[i])<<LM;
 
-      /* quanta is 6 bits, but no more than 1 bit/sample
-         and no less than 1/8 bit/sample */
+      printf("width %i = %i\n", i, width);
+
+      // quanta is 6 bits, but no more than 1 bit/sample and no less than 1/8 bit/sample
       // 'quanta' refers to the number of bits that get added per boost.
       quanta = IMIN(width<<BITRES, IMAX(6<<BITRES, width));
       dynalloc_loop_logp = dynalloc_logp;
       boost = 0;
-      while (tell+(dynalloc_loop_logp<<BITRES) < total_bits && boost < cap[i])
+
+      while (1)
       {
-         int flag;
-         flag = ec_dec_bit_logp(dec, dynalloc_loop_logp);
-         tell = ec_tell_frac(dec);   //// <<<<
-         if (!flag)
-            break;
-         boost += quanta;
-         total_bits -= quanta;       //// <<<<
-         dynalloc_loop_logp = 1;
+          // Both of these bools are really unlikely to happen; we should basically always break
+          // out of the loop due to '!flag'.
+
+          // Will decoding the boost itself bust our budget?
+          // This will only happen at extraordinarily low bit rates. If this happened, I'm not
+          // sure how you'd decode the rest of the frame... You don't have any bits allocated to
+          // the actual data.
+          int boost_decode_exceeds_frame_size = (tell + (dynalloc_loop_logp << BITRES)) >= total_bits;
+
+          // Does the amount we're trying to boost exceed the absolute maximum capacity for the
+          // band? If you boost over and over and over, this is the ceiling that causes you to
+          // bust out.
+          int boost_amount_exceeds_band_capacity = (boost >= cap[i]);
+
+          if (boost_decode_exceeds_frame_size || boost_amount_exceeds_band_capacity)
+              break;
+
+          // decode a '1' with probability 1 / (2 ^ (dynalloc_loop_logp)
+          int flag;
+          flag = ec_dec_bit_logp(dec, dynalloc_loop_logp);
+
+          // update
+          tell = ec_tell_frac(dec);
+
+          if (!flag)
+              break;
+
+          // Keep track of bits due to boost.
+          boost += quanta;
+          total_bits -= quanta;
+
+          // If band 'i' was boosted once, subsequent boosts for band 'i' have probability 1/2.
+          // Calling ec_dec_bit_logp with '_logp' = 1 is the same as decoding raw bits, except the
+          // bit will come out of the entropy coded end, not the raw bit end.
+          dynalloc_loop_logp = 1;
       }
       offsets[i] = boost;            //// <<<<
 
@@ -1084,6 +1141,10 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
       if (boost>0)
          dynalloc_logp = IMAX(2, dynalloc_logp-1);
    }
+
+   printf("boosts: {");
+   for (int i = 0; i < 21; printf("% 3i,", offsets[i++]));
+   printf("}\n");
 
    ////////////////////////////////////////////////
    // Decode trim

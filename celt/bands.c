@@ -1429,7 +1429,10 @@ static void special_hybrid_folding(const CELTMode *m, celt_norm *norm, celt_norm
  *                                 later on.
  * @param[out]    bandE       Square root of the energy for each band
  * @param[in]     pulses      Bit allocation (per band) for PVQ
- * @param[in]     shortBlocks  Zero for long blocks, non-zero for short blocks
+ * @param[in]     shortBlocks  Number of seperate MDCTs that the frame is broken up into. e.g. for
+ *                             a transient frame of length 10ms (480 samples), shortBlocks will be
+ *                             4: each band contains data from 4 short MDCTs.
+ *                             if 'shortBlocks' is 0, the frame is NOT transient.
  * @param[in]     spread      Amount of spreading to use
  * @param[in]     dual_stereo  Zero for MS stereo, non-zero for dual stereo
  * @param[in]     intensity    First band to use intensity stereo
