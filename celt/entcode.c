@@ -32,7 +32,8 @@
 #include "entcode.h"
 #include "arch.h"
 
-#if !defined(EC_CLZ)
+//#if !defined(EC_CLZ)
+#if 1
 /*This is a fallback for systems where we don't know how to access
    a BSR or CLZ instruction (see ecintrin.h).
   If you are optimizing Opus on a new platform and it has a native CLZ or

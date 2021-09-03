@@ -33,6 +33,8 @@
 #include "laplace.h"
 #include "mathops.h"
 
+#include <stdio.h>
+
 /* The minimum probability of an energy delta (out of 32768). */
 #define LAPLACE_LOG_MINP (0)
 #define LAPLACE_MINP (1<<LAPLACE_LOG_MINP)

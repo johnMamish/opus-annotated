@@ -588,6 +588,27 @@ static const int ordery_table[] = {
       15,  0,  8,  7, 12,  3, 11,  4, 14,  1,  9,  6, 13,  2, 10,  5,
 };
 
+/**
+ * This function re-orders the elements of input vector 'X'. It treats 'X' as a rectangular,
+ * row-major matrix with 'N0' rows and 'stride' columns and reforms it into anothe row-major
+ * rectangular matrix with 'N0' columns and 'stride' rows.
+ *
+ * If flag 'hadamard' is set, column N is mapped to row ordery_table[N] for N in [0, stride - 1).
+ * (note that there are really 4 'ordery_tables' for 4 different values of stride, they're just
+ * stored in the same int array; depending on 'stride', a different offset into the ordery table
+ * will be needed).
+ *
+ * If flag 'hadamard' is unset, a matrix transpose is performed.
+ *
+ * @param[in,out] X       1-d vector to de-interleave. It will be reformed in row-major order
+ *                        by performing a matrix transpose. If flag 'hadamard' is set, instead of
+ *                        a matrix transpose, X's N-th column is flipped to the ordery_table[N]-th
+ *                        row of X_out.
+ * @param[in]     N0
+ * @param[in]     stride
+ * @param[in]     hadamard  Flag telling whether to transpose the N-th column of X to the N-th row
+ *                          of X_out or if
+ */
 static void deinterleave_hadamard(celt_norm *X, int N0, int stride, int hadamard)
 {
    int i,j;
@@ -597,8 +618,10 @@ static void deinterleave_hadamard(celt_norm *X, int N0, int stride, int hadamard
    N = N0*stride;
    ALLOC(tmp, N, celt_norm);
    celt_assert(stride>0);
+
    if (hadamard)
    {
+      // map column ordery[i] of X to row i of 'tmp'
       const int *ordery = ordery_table+stride-2;
       for (i=0;i<stride;i++)
       {
@@ -606,6 +629,8 @@ static void deinterleave_hadamard(celt_norm *X, int N0, int stride, int hadamard
             tmp[ordery[i]*N0+j] = X[j*stride+i];
       }
    } else {
+      // interpret X as an 'N0' x 'stride' ('N0' rows and 'stride' columns) matrix;
+      // tmp <-- transpose(X)
       for (i=0;i<stride;i++)
          for (j=0;j<N0;j++)
             tmp[i*N0+j] = X[j*stride+i];
@@ -637,6 +662,9 @@ static void interleave_hadamard(celt_norm *X, int N0, int stride, int hadamard)
    RESTORE_STACK;
 }
 
+/**
+ *
+ */
 void haar1(celt_norm *X, int N0, int stride)
 {
    int i, j;
@@ -645,8 +673,13 @@ void haar1(celt_norm *X, int N0, int stride)
       for (j=0;j<N0;j++)
       {
          opus_val32 tmp1, tmp2;
+         // tmp1 = sqrt(1/2) * X[stride * 2 * j + i]
+         // tmp2 = sqrt(1/2) * X[stride * (2 * j + 1) + i]
          tmp1 = MULT16_16(QCONST16(.70710678f,15), X[stride*2*j+i]);
          tmp2 = MULT16_16(QCONST16(.70710678f,15), X[stride*(2*j+1)+i]);
+
+         // X[stride * 2j + i] =  tmp1 + tmp2
+         // X[stride * (2j + 1) + i] = tmp1 - tmp2
          X[stride*2*j+i] = EXTRACT16(PSHR32(ADD32(tmp1, tmp2), 15));
          X[stride*(2*j+1)+i] = EXTRACT16(PSHR32(SUB32(tmp1, tmp2), 15));
       }
@@ -1031,19 +1064,25 @@ static unsigned quant_partition(struct band_ctx *ctx, celt_norm *X,
       rebalance = ctx->remaining_bits;
       if (mbits >= sbits)
       {
+         // RECURSIVE CALL
          cm = quant_partition(ctx, X, N, mbits, B, lowband, LM,
                MULT16_16_P15(gain,mid), fill);
          rebalance = mbits - (rebalance-ctx->remaining_bits);
          if (rebalance > 3<<BITRES && itheta!=0)
             sbits += rebalance - (3<<BITRES);
+
+         // RECURSIVE CALL
          cm |= quant_partition(ctx, Y, N, sbits, B, next_lowband2, LM,
                MULT16_16_P15(gain,side), fill>>B)<<(B0>>1);
       } else {
+         // RECURSIVE CALL
          cm = quant_partition(ctx, Y, N, sbits, B, next_lowband2, LM,
                MULT16_16_P15(gain,side), fill>>B)<<(B0>>1);
          rebalance = sbits - (rebalance-ctx->remaining_bits);
          if (rebalance > 3<<BITRES && itheta!=16384)
             mbits += rebalance - (3<<BITRES);
+
+         // RECURSIVE CALL
          cm |= quant_partition(ctx, X, N, mbits, B, lowband, LM,
                MULT16_16_P15(gain,mid), fill);
       }
@@ -1064,17 +1103,17 @@ static unsigned quant_partition(struct band_ctx *ctx, celt_norm *X,
 
       if (q!=0)
       {
-         int K = get_pulses(q);
+          int K = get_pulses(q);
 
          ////////////////////////////////////////////////
          // THIS IS WHERE PVQ HAPPENS
          // PVQ is alg_quant() / alg_unquant()
          if (encode)
          {
-            ////////////////////////////////////////////////
-            // THIS IS THE PVQ AREA. IT IS alg_quant().
             cm = alg_quant(X, N, K, spread, B, ec, gain, ctx->resynth, ctx->arch);
          } else {
+            ////////////////////////////////////////////////
+            // THIS IS THE PVQ AREA. IT IS alg_unquant().
             cm = alg_unquant(X, N, K, spread, B, ec, gain);
          }
       } else {
@@ -1124,6 +1163,28 @@ static unsigned quant_partition(struct band_ctx *ctx, celt_norm *X,
 
 
 /* This function is responsible for encoding and decoding a band for the mono case. */
+/**
+ *
+ * @param[in,out] ctx        holds a bunch of related structures. This function reads...
+ *                             * ctx->tf_change
+ *                             * ctx->m, i
+ *                             * ctx->spread
+ *                           and modifies...
+ *                             * ctx->ec
+ *                             * ctx->remaining_bits
+ * @param[out?]   X
+ * @param[in]     N          length of vector X
+ * @param[in]     b          Number of 1/8th bits allocated to PVQ for current band
+ * @param[in]     B          Number of blocks that band is divided into for transient frames. For
+ *                           instance, if B = 2 and LM = 2 (10 ms frame), this band actually
+ *                           contains 2 5ms frames instead of 1 10ms frame.
+ * @param[in?]    lowband
+ * @param[in]     LM         LM = {0, 1, 2, 3} ---> frame length of {2.5, 5, 10, 20} millseconds
+ * @param[out?]   lowband_out
+ * @param[in]     gain
+ * @param[]       lowband_scratch
+ * @param[in]     fill
+ */
 static unsigned quant_band(struct band_ctx *ctx, celt_norm *X,
       int N, int b, int B, celt_norm *lowband,
       int LM, celt_norm *lowband_out,
@@ -1164,6 +1225,7 @@ static unsigned quant_band(struct band_ctx *ctx, celt_norm *X,
       lowband = lowband_scratch;
    }
 
+   // This loop is entered if frequency resolution should be increased.
    for (k=0;k<recombine;k++)
    {
       static const unsigned char bit_interleave_table[16]={
@@ -1178,7 +1240,7 @@ static unsigned quant_band(struct band_ctx *ctx, celt_norm *X,
    B>>=recombine;
    N_B<<=recombine;
 
-   /* Increasing the time resolution */
+   // This loop is entered if time resolution should be increased.
    while ((N_B&1) == 0 && tf_change<0)
    {
       if (encode)
@@ -1197,6 +1259,7 @@ static unsigned quant_band(struct band_ctx *ctx, celt_norm *X,
    /* Reorganize the samples in time order instead of frequency order */
    if (B0>1)
    {
+      // N_B >>
       if (encode)
          deinterleave_hadamard(X, N_B>>recombine, B0<<recombine, longBlocks);
       if (lowband)
@@ -1547,6 +1610,10 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
       tell = ec_tell_frac(ec);
 
       /* Compute how many bits we want to allocate to this band */
+      // 'tell'  is updated at the top of the band loop. Because pvq decoding takes bits from the
+      //         entropy coder ec, 'tell' increases after each decoded pvq
+      // 'remaining_bits'
+      // 'total_bits'
       if (i != start)
          balance -= tell;
       remaining_bits = total_bits-tell-1;

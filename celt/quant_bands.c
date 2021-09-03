@@ -538,6 +538,7 @@ void unquant_fine_energy(const CELTMode *m, int start, int end, opus_val16 *oldE
 {
    int i, c;
    /* Decode finer resolution */
+   float fine_energy[end];
    for (i=start;i<end;i++)
    {
       if (fine_quant[i] <= 0)
@@ -554,8 +555,13 @@ void unquant_fine_energy(const CELTMode *m, int start, int end, opus_val16 *oldE
          offset = (q2+.5f)*(1<<(14-fine_quant[i]))*(1.f/16384) - .5f;
 #endif
          oldEBands[i+c*m->nbEBands] += offset;
+         fine_energy[i] = offset;
       } while (++c < C);
    }
+
+   printf("fine energy: {");
+   for (int j = start; j < end; printf("%11.6f", fine_energy[j++]));
+   printf("}\n");
 }
 
 /**

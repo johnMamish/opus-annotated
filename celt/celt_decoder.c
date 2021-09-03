@@ -51,6 +51,8 @@
 #include "celt_lpc.h"
 #include "vq.h"
 
+#include <stdio.h>
+
 /* The maximum pitch lag to allow in the pitch-based PLC. It's possible to save
    CPU time in the PLC pitch search by making this smaller than MAX_PERIOD. The
    current value corresponds to a pitch of 66.67 Hz. */
@@ -899,6 +901,10 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
    const opus_int16 *eBands;
    ALLOC_STACK;
 
+   static int frame_count = 0;
+   printf("decoding frame %i\n"
+          "================================================\n", frame_count++);
+
    VALIDATE_CELT_DECODER(st);
    mode = st->mode;
    nbEBands = mode->nbEBands;
@@ -1060,16 +1066,21 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
 
    ////////////////////////////////////////////////
    // Calculate the "per-band maximum allocation vector" from PulseCache mode->cache.
+   //
+   //    idx = m->nbEBands*(2*LM+C-1)+i;
+   //    cap[i] = ((cache_caps50[idx] + 64) * C * N) / 4;
    ALLOC(cap, nbEBands, int);
    init_caps(mode,cap,LM,C);
 
    ////////////////////////////////////////////////
    // debug: print the bark band boundaries.
+   #if 0
    printf("Band boundaries: ");
    for (i = start; i < end; i++) {
        printf("% 3i, ", mode->eBands[i]);
    }
    printf("\n");
+   #endif
 
    ////////////////////////////////////////////////
    // Decode boost bits and store them in 'offsets'
@@ -1088,8 +1099,6 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
 
       // width - number of samples in band i.
       width = C*(eBands[i+1]-eBands[i])<<LM;
-
-      printf("width %i = %i\n", i, width);
 
       // quanta is 6 bits, but no more than 1 bit/sample and no less than 1/8 bit/sample
       // 'quanta' refers to the number of bits that get added per boost.
@@ -1143,7 +1152,7 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
    }
 
    printf("boosts: {");
-   for (int i = 0; i < 21; printf("% 3i,", offsets[i++]));
+   for (int k = 0; k < 21; printf("% 3i,", offsets[k++]));
    printf("}\n");
 
    ////////////////////////////////////////////////
@@ -1153,9 +1162,15 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
          ec_dec_icdf(dec, trim_icdf, 7) : 5;
 
    ////////////////////////////////////////////////
-   // Decode anti collapse bits
-   bits = (((opus_int32)len*8)<<BITRES) - ec_tell_frac(dec) - 1;
-   anti_collapse_rsv = isTransient&&LM>=2&&bits>=((LM+2)<<BITRES) ? (1<<BITRES) : 0;
+   // Decide if we should reserve a bit for anti collapse; if so, adjust our bit count.
+   //
+   // From RFC6716 section 4.3.3
+   // 'total' is set to the remaining available 8th bits...
+   // From this value, one (8th bit) is subtracted to ensure that the resulting allocation will be
+   // conservative. 'anti_collapse_rsv' is set to 8 (8th bits) if and only if the frame is a
+   // transient, LM is greater than 1, and total is greater than or equal to (LM+2) * 8
+   bits = (((opus_int32)len * 8) << BITRES) - ec_tell_frac(dec) - 1;
+   anti_collapse_rsv = isTransient && (LM >= 2) && (bits >= ((LM+2)<<BITRES)) ? (1 << BITRES) : 0;
    bits -= anti_collapse_rsv;
 
    ////////////////////////////////////////////////
@@ -1167,6 +1182,15 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
          alloc_trim, &intensity, &dual_stereo, bits, &balance, pulses,
          fine_quant, fine_priority, C, LM, dec, 0, 0, 0);
 
+   printf("final bit allocations: ");
+   printf("pvq: {");
+   for (int j = 0; j < end; j++) { printf("% 5d", pulses[j]); }
+   printf("}, ");
+   printf("fine: {");
+   for (int j = 0; j < end; j++) { printf("% 5d", fine_quant[j]); }
+   printf("}, ");
+   printf("balance: % 5d\n", balance);
+
    ////////////////////////////////////////////////
    // CALCULATE FINE ENERGY
    unquant_fine_energy(mode, start, end, oldBandE, fine_quant, dec, C);
@@ -1175,6 +1199,8 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
       OPUS_MOVE(decode_mem[c], decode_mem[c]+N, DECODE_BUFFER_SIZE-N+overlap/2);
    } while (++c<CC);
 
+   ////////////////////////////////////////////////
+   // DECODE BAND SHAPES
    /* Decode fixed codebook */
    ALLOC(collapse_masks, C*nbEBands, unsigned char);
 
@@ -1186,8 +1212,6 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
    ALLOC(X, C*N, celt_norm);   /**< Interleaved normalised MDCTs */
 #endif
 
-   ////////////////////////////////////////////////
-   // DECODE BAND SHAPES
    quant_all_bands(0, mode, start, end, X, C==2 ? X+N : NULL, collapse_masks,
          NULL, pulses, shortBlocks, spread_decision, dual_stereo, intensity, tf_res,
          len*(8<<BITRES)-anti_collapse_rsv, balance, dec, LM, codedBands, &st->rng, 0,
@@ -1199,7 +1223,7 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
    }
 
    ////////////////////////////////////////////////
-   //
+   // ADD LEFTOVER BITS TO FINE ENERGY
    unquant_energy_finalise(mode, start, end, oldBandE,
          fine_quant, fine_priority, len*8-ec_tell(dec), dec, C);
 
@@ -1292,6 +1316,8 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
       return OPUS_INTERNAL_ERROR;
    if(ec_get_error(dec))
       st->error = 1;
+
+   printf("\n\n");
    return frame_size/st->downsample;
 }
 

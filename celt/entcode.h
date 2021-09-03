@@ -105,6 +105,12 @@ static OPUS_INLINE int ec_get_error(ec_ctx *_this){
 /*Returns the number of bits "used" by the encoded or decoded symbols so far.
   This same number can be computed in either the encoder or the decoder, and is
    suitable for making coding decisions.
+
+  note the EC_ILOG returns a ROUNDED UP log2.
+      EC_ILOG(4) --> 3
+      EC_ILOG(5) --> 3
+      EC_ILOG(8) --> 4
+
   Return: The number of bits.
           This will always be slightly larger than the exact value (e.g., all
            rounding error is in the positive direction).*/

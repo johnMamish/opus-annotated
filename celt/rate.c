@@ -309,6 +309,7 @@ static void calculate_trim_offset(const CELTMode* m, int start, int end, int all
  * @param[in]     end        ending band (typically 21 for full-bandwidth CELT)
  * @param[in]     offsets    Contains number of 1/8 bits to boost bands on a per-band basis
  * @param[in]     cap        Maximum possible bit allocation per band.
+ *
  * @param[in]     total      the number of 1/8th bits remaining in the frame whose allocation needs
  *                           to be spread over the bands.
  * @param[in]     C          Number of channels. Nominally 1.
@@ -364,11 +365,18 @@ int search_q_lo(const CELTMode* m, int start, int end, const int* offsets, const
             /* Don't allocate more than we can actually use */
             psum += IMIN(bitsj, cap[j]);
          } else {
-            if (bitsj >= C<<BITRES)
+            if (bitsj >= C<<BITRES) {
+               bitsj = C<<BITRES;
                psum += C<<BITRES;
+            } else {
+               bitsj = 0;
+               psum += 0;
+            }
          }
-      }
 
+         //printf("% 5i,", bitsj);
+      }
+      //printf("\b \n");
       if (psum > total) {
          // 'mid' overshot the budget
          hi = mid - 1;
@@ -376,10 +384,78 @@ int search_q_lo(const CELTMode* m, int start, int end, const int* offsets, const
          // 'mid' undershot the budget
          lo = mid + 1;
       }
-      /*printf ("lo = %d, hi = %d\n", lo, hi);*/
+
+      printf("q search: psum = %i, lo = %i\n", psum, lo);
    } while (lo <= hi);
 
    return (lo - 1);
+}
+
+/**
+ * Interpolates between 2 bit allocations.
+ *
+ * @param[in]     bits1     Pointer to an array of per-band bit allocations for the lesser of the
+ *                          2 q values that we plan to interpolate between.
+ * @param[in]     bits2     Pointer to an array of per-band bit allocations for the greater of the
+ *                          2 q values that we plan to interpolate between.
+ * @param[in]     thresh    Minimum number of bits for which PVQ shape will be encoded.
+ * @param[in]     mid       fractional amount in fractions of 1/(2^alloc_bits) to interpolate above
+ *                          bits1
+ * @param[in]     alloc_steps
+ * @param[out]    bits_out  returns the
+ */
+int interpolate_fractional_q_between_bits(int start, int end,
+                                          const int* bits1, const int* bits2,
+                                          const int* cap, const int* thresh, int alloc_floor,
+                                          int mid, int alloc_steps, int* bits_out)
+{
+   int j;
+   int psum = 0;
+   int done = 0;
+   for (j = end; j-- > start;) {
+      // Because we're doing a binary search over 64 integers, all of our divisions can just
+      // be left-shifts. Only multiply here is by mid.
+      int tmp = bits1[j] + ((mid * (opus_int32)bits2[j]) >> alloc_steps);
+
+      if ((tmp >= thresh[j]) || done)
+      {
+         /* Don't allocate more than we can actually use */
+         bits_out[j] = IMIN(tmp, cap[j]);
+
+         // All subsequent bands lower than this one get their bit allocation directly from the
+         // interpolation
+         done = 1;
+      } else {
+         // If this band and all bands higher than it have an interpolated bit allocation LOWER
+         // than their PVQ threshold, we allocate either alloc_floor or 0 bits to those bands.
+         // Once a band in descending order "breaks" this "rule", no subsequent, lower-freq bands
+         // are eligable.
+         if (tmp >= alloc_floor)
+            bits_out[j] = alloc_floor;
+         else
+            bits_out[j] = 0;
+      }
+
+      psum += bits_out[j];
+   }
+
+   return psum;
+}
+
+/**
+ * Same as interpolate_fractional_q_between_bits, but instead of returning a per-band bit
+ * allocation, just returns the total number of bits allocated to all bands.
+ */
+int total_bits_for_fractional_q(int start, int end,
+                                const int* bits1, const int* bits2,
+                                const int* cap, const int* thresh, int alloc_floor,
+                                int mid, int alloc_steps)
+{
+   int bits[21];
+   int psum;
+   psum = interpolate_fractional_q_between_bits(start, end, bits1, bits2, cap, thresh, alloc_floor, mid, ALLOC_STEPS, bits);
+
+   return psum;
 }
 
 /**
@@ -425,7 +501,7 @@ int search_q_lo(const CELTMode* m, int start, int end, const int* offsets, const
  * @param[in]     signalBandwidth  Allows skipping of some higher-frequency computation. This
  *                                 parameter appears to be unused and is left to set 0 in all the
  *                                 places where interp_bits2pulses() gets called, effectively
- *                                 disabling it.
+ *                   f              disabling it.
  */
 static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end, int skip_start,
       const int *bits1, const int *bits2, const int *thresh, const int *cap, opus_int32 total, opus_int32 *_balance,
@@ -460,65 +536,36 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
    //
    // at the end of this loop, lo contains the largest value of q (in 1/64ths) whose bit allocation
    // according to table 57 (plus allocation tilt and band boost) doesn't exceed the budget.
+   printf("total: %i\n", total);
    lo = 0;
    hi = 1<<ALLOC_STEPS;
    for (i=0;i<ALLOC_STEPS;i++)
    {
       int mid = (lo+hi)>>1;
-      psum = 0;
-      done = 0;
-      for (j=end;j-->start;)
-      {
-         // Because we're doing a binary search over 64 integers, all of our divisions can just
-         // be left-shifts. Only multiply here is by mid.
-         int tmp = bits1[j] + (mid*(opus_int32)bits2[j]>>ALLOC_STEPS);
-         if (tmp >= thresh[j] || done)
-         {
-            done = 1;
-            /* Don't allocate more than we can actually use */
-            psum += IMIN(tmp, cap[j]);
-         } else {
-            if (tmp >= alloc_floor)
-               psum += alloc_floor;
-         }
-      }
+      psum = total_bits_for_fractional_q(start, end, bits1, bits2, cap,
+                                         thresh, alloc_floor, mid, ALLOC_STEPS);
+
       if (psum > total)
          hi = mid;
       else
          lo = mid;
+
+      printf("fractional search step %i: psum = %i, lo_fractional = %i\n", i, psum, lo);
    }
+
+   printf("fractional q = %i / 64\n", lo);
 
    ////////////////////////////////////////////////
    // INTERPOLATE
    //
    // at the end of this, 'bits' contains the number of bits for each band.
-   psum = 0;
-   /*printf ("interp bisection gave %d\n", lo);*/
-   done = 0;
-   for (j=end;j-->start;)
-   {
-      // INTERPOLATION STEP
-      // Note that we don't interpolate directly between values in Table 57, we first incorporate
-      // band boost and tilt.
-      int tmp = bits1[j] + ((opus_int32)lo*bits2[j]>>ALLOC_STEPS);
+   // FIX ARGS
+   psum = interpolate_fractional_q_between_bits(start, end, bits1, bits2, cap,
+                                                thresh, alloc_floor, lo, ALLOC_STEPS, bits);
 
-      if (tmp < thresh[j] && !done)
-      {
-         if (tmp >= alloc_floor)
-            tmp = alloc_floor;
-         else
-            tmp = 0;
-      } else
-         done = 1;
-
-      /* Don't allocate more than we can actually use */
-      if (tmp >= cap[j]) {
-          printf("Debug: tmp %i exceeds capacity %i in band %i\n", tmp, cap[j], j);
-      }
-      tmp = IMIN(tmp, cap[j]);
-      bits[j] = tmp;
-      psum += tmp;
-   }
+   printf("1/8th bit allocations before band skipping: {");
+   for (j = 0; j < end; j++) { printf("% 5d", bits[j]); }
+   printf("}\n");
 
    ////////////////////////////////////////////////
    // BAND SKIPPING
@@ -585,6 +632,11 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
          psum += 1<<BITRES;
          band_bits -= 1<<BITRES;
       }
+
+      // If we "made it past" the if statement without breaking out of the loop, it means that the
+      // j-th band is either auto-skipped because there are too few bits allocated to it,
+      // or it was explicitly skipped, which would be signalled in the bitstream.
+
       /*Reclaim the bits originally allocated to this band.*/
       psum -= bits[j]+intensity_rsv;
       if (intensity_rsv > 0)
@@ -601,10 +653,13 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
       }
    }
 
+   printf("1/8th bit allocations after band skipping: {");
+   for (int j = 0; j < 21; j++) printf("% 5d", bits[j]);
+   printf("}\n");
+
    ////////////////////////////////////////////////
-   //
+   // Code the intensity and dual stereo parameters.
    celt_assert(codedBands > start);
-   /* Code the intensity and dual stereo parameters. */
    if (intensity_rsv > 0)
    {
       if (encode)
@@ -617,6 +672,7 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
    }
    else
       *intensity = 0;
+
    if (*intensity <= start)
    {
       total += dual_stereo_rsv;
@@ -656,8 +712,12 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
       bits[j] += tmp;
       left -= tmp;
    }
-   printf("1/8th bit allocations after step xxx?: { "); for (j=0;j<end;j++)printf("%d ", bits[j]);printf(" }\n");
-   printf("left: %i\n", left);
+   //printf("1/8th bit allocations after step xxx?: { "); for (j=0;j<end;j++)printf("%d ", bits[j]);printf(" }\n");
+   //printf("left: %i\n", left);
+
+   printf("1/8th bit allocations after penultimate redistribution: {");
+   for (int j = 0; j < 21; j++) printf("% 5d", bits[j]);
+   printf("}\n");
 
    ////////////////////////////////////////////////
    // Split allocated bits between fine energy quantization and PVQ (???)
@@ -667,7 +727,8 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
    balance = 0;
    for (j=start;j<codedBands;j++)
    {
-      int N0, N, den;
+      int N0, N;
+      int den;      //
       int offset;
       int NClogN;
       opus_int32 excess, bit;
@@ -684,21 +745,33 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
          excess = MAX32(bit-cap[j],0);
          bits[j] = bit-excess;
 
+         // den - (C * N) + 1 if we're working in stereo, (C * N) otherwise.
          /* Compensate for the extra DoF in stereo */
          den = C*N;
          if ((C==2 && N>2 && !*dual_stereo && j<*intensity) ? 1 : 0) {
              den++;
          }
 
+         // m->logN[j] - a "conservatively large" "estimate" of log2(# of buckets @ 2.5ms frame width)
+         //              expressed in 1/8th bits. I think that just means "rounded up".
+         //              e.g. band j = 19 has 18 buckets, log2(18) = 33.359... round up to 34.
+         // logM       - LM << BITRES = log2(framesize / 120) * 8
+         //
+         // so together, m->logN[j] + logM gives ceil(log2(framesize) * 8).
+         // NClogN really is just C * N * log(N) * 8 (where N is framesize)
          NClogN = den*(m->logN[j] + logM);
 
+         // FINE_OFFSET has a fixed value of 21. Not sure what the significance of this is. Is it a
+         // coincidence that it's the same as the # of bands? (almost certainly is a coincidence).
+         //
+         // offset = den * ((log2(den) / 2) - 21)
          /* Offset for the number of fine bits by log2(N)/2 + FINE_OFFSET
             compared to their "fair share" of total/N */
-         offset = (NClogN>>1)-den*FINE_OFFSET;
+         offset = (NClogN / 2) - (den * FINE_OFFSET);
 
          /* N=2 is the only point that doesn't match the curve */
          if (N==2)
-            offset += den<<BITRES>>2;
+            offset += (den << BITRES) >> 2;
 
          /* Changing the offset for allocating the second and third
              fine energy bit */
@@ -818,6 +891,8 @@ static OPUS_INLINE int interp_bits2pulses(const CELTMode *m, int start, int end,
 int clt_compute_allocation(const CELTMode *m, int start, int end, const int *offsets, const int *cap, int alloc_trim, int *intensity, int *dual_stereo,
       opus_int32 total, opus_int32 *balance, int *pulses, int *ebits, int *fine_priority, int C, int LM, ec_ctx *ec, int encode, int prev, int signalBandwidth)
 {
+   printf("computing allocation for % 5i 8th bits\n", total);
+
    int lo, hi, len, j;
    int codedBands;
    int skip_start;
@@ -861,6 +936,11 @@ int clt_compute_allocation(const CELTMode *m, int start, int end, const int *off
    calculate_trim_offset(m, start, end, alloc_trim, C, LM, thresh, trim_offset);
 
    lo = search_q_lo(m, start, end, offsets, cap, total, C, LM, thresh, trim_offset);
+
+   printf("q_lo = %i\n", lo);
+
+   // bits for q_lo + 1
+   int bits1p[21];
 
    /*printf ("interp between %d and %d\n", lo, hi);*/
    // This loop calculates bits1 and bits2 given trim, band-boost, and lo (the highest integer
@@ -912,11 +992,19 @@ int clt_compute_allocation(const CELTMode *m, int start, int end, const int *off
       if (offsets[j]>0)
          skip_start = j;
 
+      bits1p[j] = bits2j;
       //
       bits2j = IMAX(0,bits2j-bits1j);
       bits1[j] = bits1j;
       bits2[j] = bits2j;
    }
+
+   printf("1/8th bit allocations for lo: {");
+   for (int j = 0; j < 21; j++) printf("% 5d", bits1[j]);
+   printf("}\n");
+   printf("1/8th bit allocations for hi: {");
+   for (int j = 0; j < 21; j++) printf("% 5d", bits1p[j]);
+   printf("}\n");
 
    ////////////////////////////////////////////////
    // INTERPOLATE

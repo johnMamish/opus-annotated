@@ -78,7 +78,13 @@ static __inline int ec_bsr(unsigned long _x){
 # endif
 #endif
 
-#if defined(EC_CLZ)
+// EC_ILOG returns ceil(log2(x + 1)), so
+//     EC_ILOG(4) --> 3
+//     EC_ILOG(3) --> 2
+//     EC_ILOG(9) --> 4
+
+//#if defined(EC_CLZ)
+#if 0
 /*Note that __builtin_clz is not defined when _x==0, according to the gcc
    documentation (and that of the BSR instruction that implements it on x86).
   The majority of the time we can never pass it zero.

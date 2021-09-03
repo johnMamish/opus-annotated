@@ -30,6 +30,7 @@
 #endif
 
 #include <stddef.h>
+#include <stdio.h>
 #include "os_support.h"
 #include "arch.h"
 #include "entdec.h"
@@ -122,11 +123,15 @@ void ec_dec_init(ec_dec *_this,unsigned char *_buf,opus_uint32 _storage){
   _this->end_offs=0;
   _this->end_window=0;
   _this->nend_bits=0;
+
+  // The last paragraph of RFC6716 section 4.1.6 has explicit justification for
+  // initializing nbits_total to this value (which ends up being 9).
   /*This is the offset from which ec_tell() will subtract partial bits.
     The final value after the ec_dec_normalize() call will be the same as in
      the encoder, but we have to compensate for the bits that are added there.*/
   _this->nbits_total=EC_CODE_BITS+1
    -((EC_CODE_BITS-EC_CODE_EXTRA)/EC_SYM_BITS)*EC_SYM_BITS;
+  printf("nbits_total initialized to %i\n", _this->nbits_total);
   _this->offs=0;
   _this->rng=1U<<EC_CODE_EXTRA;
   _this->rem=ec_read_byte(_this);
