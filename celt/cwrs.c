@@ -460,80 +460,137 @@ void encode_pulses(const int *_y,int _n,int _k,ec_enc *_enc){
   ec_enc_uint(_enc,icwrs(_n,_y),CELT_PVQ_V(_n,_k));
 }
 
+/**
+ * Decodes a number from the PVQ codebook into a vector.
+ *
+ * I think that cwrsi stands for Choose With Replacement Signed Index; decoding a PVQ
+ * codeword involves enumerating all of the possible choices of pulse with replacement.
+ *
+ * @param[in]     _n         Number of dimensions
+ * @param[in]     _k         Number of pulses
+ * @param[in]     _i         codebook number to decode
+ * @param[out]    _y         Decoded vector
+ * @return the L2-norm of the decoded vector; its magnitude.
+ */
 static opus_val32 cwrsi(int _n,int _k,opus_uint32 _i,int *_y){
-  opus_uint32 p;
-  int         s;
-  int         k0;
-  opus_int16  val;
-  opus_val32  yy=0;
-  celt_assert(_k>0);
-  celt_assert(_n>1);
-  while(_n>2){
-    opus_uint32 q;
-    /*Lots of pulses case:*/
-    if(_k>=_n){
-      const opus_uint32 *row;
-      row=CELT_PVQ_U_ROW[_n];
-      /*Are the pulses in this dimension negative?*/
-      p=row[_k+1];
-      s=-(_i>=p);
-      _i-=p&s;
-      /*Count how many pulses were placed in this dimension.*/
-      k0=_k;
-      q=row[_n];
-      if(q>_i){
-        celt_sig_assert(p>q);
-        _k=_n;
-        do p=CELT_PVQ_U_ROW[--_k][_n];
-        while(p>_i);
-      }
-      else for(p=row[_k];p>_i;p=row[_k])_k--;
-      _i-=p;
-      val=(k0-_k+s)^s;
-      *_y++=val;
-      yy=MAC16_16(yy,val,val);
+    opus_uint32 p;
+    int         s;
+    int         k0;
+    opus_int16  val;
+    opus_val32  yy = 0;
+    celt_assert(_k > 0);
+    celt_assert(_n > 1);
+    while (_n > 2) {
+        // This loop iterates over the output vector, pointed by _y.
+        // Starting with the 0-th element in _y, it finds the value of each subsequent element (or
+        // "dimension") in _y.
+
+        opus_uint32 q;
+        if (_k >= _n) {
+            // Lots of pulses case:
+            // row points into a table such that row[_k] gives U(_n, _k).
+            const opus_uint32 *row;
+            row = CELT_PVQ_U_ROW[_n];
+
+            /*Are the pulses in this dimension negative?*/
+            // U(_n, _k + 1) = the number of vectors with a first element >= 0.
+            p = row[_k + 1];
+            if (_i >= p) {
+                // The component of _y currently being evaluated by the loop will be negative.
+                s = -1;
+
+                // The same codewords encode negative and positive components of _y, the negative
+                // codebook just starts U(_n, _k + 1) above the >= codebook; if we just subract
+                // that offset, we can decode the number as if we know it's positive and then
+                // re-apply the sign later.
+                _i -= p;
+            } else {
+                s = 0;
+            }
+
+            /*Count how many pulses were placed in this dimension.*/
+            // 'N' is fixed, we just now need to find the value of 'K' that corresponds to our
+            // codeword _i.
+            // Because of the way the codebook is constructed, the value of 'K' corresponding to
+            // _i is the one for which V(N, K) <= _i < V(N, K + 1).
+            // We start with K = _n and search up or down to find the satisfactory value of K.
+            k0 = _k;
+
+            // q = U(_n, _n)
+            q = row[_n];
+            if (q > _i) {
+                // U(_n, _n) > codeword, start search at K = _n - 1.
+                celt_sig_assert(p > q);
+                _k = _n;
+                do {
+                    p = CELT_PVQ_U_ROW[--_k][_n];
+                } while (p > _i);
+            } else {
+                // U(_n, _n) <= codword, start search at K = _k, the max number of pulses.
+                for(p = row[_k]; p > _i; p = row[_k])
+                    _k--;
+            }
+
+            // determine the value for *_y
+            // if s == -1:
+            //     val = ~(k0 - _k - 1)
+            // if s == 0:
+            //     val = k0 - _k
+            val = (k0 - _k + s) ^ s;
+            *_y++ = val;
+
+            // Accmulate L-2 norm result
+            //yy = MAC16_16(yy,val,val);
+            yy += val * val;
+
+            // adjust the codeword to reflect the
+            _i -= p;
+        } else {
+            /*Lots of dimensions case:*/
+            /*Are there any pulses in this dimension at all?*/
+            p=CELT_PVQ_U_ROW[_k][_n];
+            q=CELT_PVQ_U_ROW[_k+1][_n];
+            if ((p <= _i) && (_i < q)) {
+                //
+                _i-=p;
+                *_y++=0;
+            } else {
+                /*Are the pulses in this dimension negative?*/
+                s=-(_i>=q);
+                _i-=q&s;
+
+                /*Count how many pulses were placed in this dimension.*/
+                k0=_k;
+                do p=CELT_PVQ_U_ROW[--_k][_n];
+                while(p>_i);
+                _i-=p;
+                val=(k0-_k+s)^s;
+                *_y++=val;
+                yy=MAC16_16(yy,val,val);
+            }
+        }
+        _n--;
     }
-    /*Lots of dimensions case:*/
-    else{
-      /*Are there any pulses in this dimension at all?*/
-      p=CELT_PVQ_U_ROW[_k][_n];
-      q=CELT_PVQ_U_ROW[_k+1][_n];
-      if(p<=_i&&_i<q){
-        _i-=p;
-        *_y++=0;
-      }
-      else{
-        /*Are the pulses in this dimension negative?*/
-        s=-(_i>=q);
-        _i-=q&s;
-        /*Count how many pulses were placed in this dimension.*/
-        k0=_k;
-        do p=CELT_PVQ_U_ROW[--_k][_n];
-        while(p>_i);
-        _i-=p;
-        val=(k0-_k+s)^s;
-        *_y++=val;
-        yy=MAC16_16(yy,val,val);
-      }
-    }
-    _n--;
-  }
-  /*_n==2*/
-  p=2*_k+1;
-  s=-(_i>=p);
-  _i-=p&s;
-  k0=_k;
-  _k=(_i+1)>>1;
-  if(_k)_i-=2*_k-1;
-  val=(k0-_k+s)^s;
-  *_y++=val;
-  yy=MAC16_16(yy,val,val);
-  /*_n==1*/
-  s=-(int)_i;
-  val=(_k+s)^s;
-  *_y=val;
-  yy=MAC16_16(yy,val,val);
-  return yy;
+
+    // base cases for n == 2 and n == 1 are simple, so they're "hardcoded"; the loop is broken out
+    // of early.
+    /*_n==2*/
+    p=2*_k+1;
+    s=-(_i>=p);
+    _i-=p&s;
+    k0=_k;
+    _k=(_i+1)>>1;
+    if(_k)_i-=2*_k-1;
+    val=(k0-_k+s)^s;
+    *_y++=val;
+    yy=MAC16_16(yy,val,val);
+
+    /*_n==1*/
+    s=-(int)_i;
+    val=(_k+s)^s;
+    *_y=val;
+    yy=MAC16_16(yy,val,val);
+    return yy;
 }
 
 opus_val32 decode_pulses(int *_y,int _n,int _k,ec_dec *_dec){

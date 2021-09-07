@@ -1201,7 +1201,14 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
 
    ////////////////////////////////////////////////
    // DECODE BAND SHAPES
-   /* Decode fixed codebook */
+
+   // 'collapse_masks' has one "collapse mask" for each band in each channel.
+   //
+   // Each "collapse mask" in 'collapse_masks' is a bitmask. Bit 'n' of the bitmask is '0' if the
+   // n-th short block in that band is collapsed (i.e. all of its values after shape decoding are
+   // 0).
+   // Transient bands are broken up into up to 8 "short blocks" if they trade off increased time
+   // resolution at the expense of frequency resolution.
    ALLOC(collapse_masks, C*nbEBands, unsigned char);
 
 #ifdef NORM_ALIASING_HACK
@@ -1239,11 +1246,6 @@ int celt_decode_with_ec(CELTDecoder * OPUS_RESTRICT st, const unsigned char *dat
 
    ////////////////////////////////////////////////////////////////
    // SYNTHESIS
-   // Noe that the ragne coder isn't passed into celt_synthesis; I think that all of the
-   // decoding is already done at this point.
-   // Some questions:
-   //    * Where were energies decoded??
-   //    * Where were shapes decoded?
    celt_synthesis(mode, X, out_syn, oldBandE, start, effEnd,
                   C, CC, isTransient, LM, st->downsample, silence, st->arch);
 

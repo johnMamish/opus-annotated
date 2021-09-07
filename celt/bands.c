@@ -1163,28 +1163,7 @@ static unsigned quant_partition(struct band_ctx *ctx, celt_norm *X,
 
 
 /* This function is responsible for encoding and decoding a band for the mono case. */
-/**
- *
- * @param[in,out] ctx        holds a bunch of related structures. This function reads...
- *                             * ctx->tf_change
- *                             * ctx->m, i
- *                             * ctx->spread
- *                           and modifies...
- *                             * ctx->ec
- *                             * ctx->remaining_bits
- * @param[out?]   X
- * @param[in]     N          length of vector X
- * @param[in]     b          Number of 1/8th bits allocated to PVQ for current band
- * @param[in]     B          Number of blocks that band is divided into for transient frames. For
- *                           instance, if B = 2 and LM = 2 (10 ms frame), this band actually
- *                           contains 2 5ms frames instead of 1 10ms frame.
- * @param[in?]    lowband
- * @param[in]     LM         LM = {0, 1, 2, 3} ---> frame length of {2.5, 5, 10, 20} millseconds
- * @param[out?]   lowband_out
- * @param[in]     gain
- * @param[]       lowband_scratch
- * @param[in]     fill
- */
+
 static unsigned quant_band(struct band_ctx *ctx, celt_norm *X,
       int N, int b, int B, celt_norm *lowband,
       int LM, celt_norm *lowband_out,
@@ -1534,6 +1513,11 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
    int update_lowband = 1;
    int C = Y_ != NULL ? 2 : 1;
    int norm_offset;
+
+   // theta_rdo is true if we're encoding stereo, but not "dual stereo", and it's high-complexity
+   // Seems like 'theta' is a parameter that can be either rounded up or down; depending on how
+   // theta is rounded, you can get better or worse results. If theta_rdo is true, then the encoder
+   // tries rounding theta in both directions and picks the better result.
    int theta_rdo = encode && Y_!=NULL && !dual_stereo && complexity>=8;
 #ifdef RESYNTH
    int resynth = 1;
@@ -1638,6 +1622,9 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
 
       tf_change = tf_res[i];
       ctx.tf_change = tf_change;
+
+      // Not sure what this 'if' statement does, but it never gets executed in any tests; anyways,
+      // m->effEBands is nominally equal to 'end'.
       if (i>=m->effEBands)
       {
          X=norm;
@@ -1645,6 +1632,8 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
             Y = norm;
          lowband_scratch = NULL;
       }
+
+      // Can't use the scratch space because the final band uses it
       if (last && !theta_rdo)
          lowband_scratch = NULL;
 
@@ -1793,3 +1782,182 @@ void quant_all_bands(int encode, const CELTMode *m, int start, int end,
 
    RESTORE_STACK;
 }
+
+
+#if 0
+// stripped-down, mono-only version of quant_all_bands
+void quant_all_bands(int encode, const CELTMode *m, int start, int end,
+      celt_norm *X_, celt_norm *Y_, unsigned char *collapse_masks,
+      const celt_ener *bandE, const int *pulses, int shortBlocks, int spread,
+      int dual_stereo, int intensity, const int *tf_res, opus_int32 total_bits,
+      opus_int32 balance, ec_ctx *ec, int LM, int codedBands,
+      opus_uint32 *seed, int complexity, int arch, int disable_inv)
+{
+   int i;
+   opus_int32 remaining_bits;
+   const opus_int16 * OPUS_RESTRICT eBands = m->eBands;
+   celt_norm * OPUS_RESTRICT norm, * OPUS_RESTRICT norm2;
+   VARDECL(celt_norm, _norm);
+   VARDECL(celt_norm, _lowband_scratch);
+   VARDECL(celt_norm, X_save);
+   VARDECL(celt_norm, Y_save);
+   VARDECL(celt_norm, X_save2);
+   VARDECL(celt_norm, Y_save2);
+   VARDECL(celt_norm, norm_save2);
+   int resynth_alloc;
+   celt_norm *lowband_scratch;
+   int B;
+   int M;
+   int lowband_offset;
+   int update_lowband = 1;
+   int C = Y_ != NULL ? 2 : 1;
+   int norm_offset;
+
+   // wtf is theta_rdo? Can we assume that it's 0?
+   // Yes, we can, because Y_ will be NULL for sure if C == 1.
+   int resynth = 1;
+
+   struct band_ctx ctx;
+   SAVE_STACK;
+
+   M = 1<<LM;
+   B = shortBlocks ? M : 1;
+   norm_offset = M*eBands[start];
+   /* No need to allocate norm for the last band because we don't need an
+      output in that band. */
+   ALLOC(_norm, C*(M*eBands[m->nbEBands-1]-norm_offset), celt_norm);
+   norm = _norm;
+   norm2 = norm + M*eBands[m->nbEBands-1]-norm_offset;
+
+   /* For decoding, we can use the last band as scratch space because we don't need that
+      scratch space for the last band and we don't care about the data there until we're
+      decoding the last band. */
+   if (encode && resynth)
+      resynth_alloc = M*(eBands[m->nbEBands]-eBands[m->nbEBands-1]);
+   else
+      resynth_alloc = ALLOC_NONE;
+   ALLOC(_lowband_scratch, resynth_alloc, celt_norm);
+   if (encode && resynth)
+      lowband_scratch = _lowband_scratch;
+   else
+      lowband_scratch = X_+M*eBands[m->nbEBands-1];
+   ALLOC(X_save, resynth_alloc, celt_norm);
+   ALLOC(Y_save, resynth_alloc, celt_norm);
+   ALLOC(X_save2, resynth_alloc, celt_norm);
+   ALLOC(Y_save2, resynth_alloc, celt_norm);
+   ALLOC(norm_save2, resynth_alloc, celt_norm);
+
+   lowband_offset = 0;
+   ctx.bandE = bandE;
+   ctx.ec = ec;
+   ctx.encode = encode;
+   ctx.intensity = intensity;
+   ctx.m = m;
+   ctx.seed = *seed;
+   ctx.spread = spread;
+   ctx.arch = arch;
+   ctx.disable_inv = disable_inv;
+   ctx.resynth = resynth;
+   ctx.theta_round = 0;
+   /* Avoid injecting noise in the first band on transients. */
+   ctx.avoid_split_noise = B > 1;
+   for (i=start;i<end;i++)
+   {
+      opus_int32 tell;
+      int b;
+      int N;
+      opus_int32 curr_balance;
+      int effective_lowband=-1;
+      celt_norm * OPUS_RESTRICT X, * OPUS_RESTRICT Y;
+      int tf_change=0;
+      unsigned x_cm;
+      unsigned y_cm;
+      int last;
+
+      ctx.i = i;
+      last = (i==end-1);
+
+      // get pointers into data for band 'i'
+      X = X_+M*eBands[i];
+      Y = NULL;
+      N = M*eBands[i+1]-M*eBands[i];
+      tell = ec_tell_frac(ec);
+
+      /* Compute how many bits we want to allocate to this band */
+      // 'tell'  is updated at the top of the band loop. Because pvq decoding takes bits from the
+      //         entropy coder ec, 'tell' increases after each decoded pvq
+      // 'remaining_bits'
+      // 'total_bits'
+      if (i != start)
+         balance -= tell;
+      remaining_bits = total_bits-tell-1;
+      ctx.remaining_bits = remaining_bits;
+      if (i <= codedBands-1)
+      {
+         curr_balance = celt_sudiv(balance, IMIN(3, codedBands-i));
+         b = IMAX(0, IMIN(16383, IMIN(remaining_bits+1,pulses[i]+curr_balance)));
+      } else {
+         b = 0;
+      }
+
+      if (resynth && (M*eBands[i]-N >= M*eBands[start] || i==start+1) && (update_lowband || lowband_offset==0))
+            lowband_offset = i;
+      if (i == start+1)
+         special_hybrid_folding(m, norm, norm2, start, M, dual_stereo);
+
+      tf_change = tf_res[i];
+      ctx.tf_change = tf_change;
+
+      // Can't use the scratch space because the final band uses it
+      if (last)
+         lowband_scratch = NULL;
+
+      /* Get a conservative estimate of the collapse_mask's for the bands we're
+         going to be folding from. */
+      if (lowband_offset != 0 && (spread!=SPREAD_AGGRESSIVE || B>1 || tf_change<0))
+      {
+         int fold_start;
+         int fold_end;
+         int fold_i;
+         /* This ensures we never repeat spectral content within one band */
+         effective_lowband = IMAX(0, M*eBands[lowband_offset]-norm_offset-N);
+         fold_start = lowband_offset;
+         while(M*eBands[--fold_start] > effective_lowband+norm_offset);
+         fold_end = lowband_offset-1;
+
+         while(++fold_end < i && M*eBands[fold_end] < effective_lowband+norm_offset+N);
+
+         x_cm = y_cm = 0;
+         fold_i = fold_start; do {
+           x_cm |= collapse_masks[fold_i*C+0];
+           y_cm |= collapse_masks[fold_i*C+C-1];
+         } while (++fold_i<fold_end);
+      }
+      /* Otherwise, we'll be using the LCG to fold, so all blocks will (almost
+         always) be non-zero. */
+      else
+         x_cm = y_cm = (1<<B)-1;
+
+
+      ////////////////////////////////////////////////
+      // MONO PVQ DECODING HAPPENS HERE
+      x_cm = quant_band(&ctx, X, N, b, B,
+                        effective_lowband != -1 ? norm+effective_lowband : NULL, LM,
+                        last?NULL:norm+M*eBands[i]-norm_offset, Q15ONE, lowband_scratch, x_cm|y_cm);
+      y_cm = x_cm;
+
+      collapse_masks[i*C+0] = (unsigned char)x_cm;
+      collapse_masks[i*C+C-1] = (unsigned char)y_cm;
+      balance += pulses[i] + tell;
+
+      /* Update the folding position only as long as we have 1 bit/sample depth. */
+      update_lowband = b>(N<<BITRES);
+      /* We only need to avoid noise on a split for the first band. After that, we
+         have folding. */
+      ctx.avoid_split_noise = 0;
+   }
+   *seed = ctx.seed;
+
+   RESTORE_STACK;
+}
+#endif

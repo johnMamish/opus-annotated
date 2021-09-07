@@ -44,6 +44,12 @@
 #endif
 
 #ifndef OVERRIDE_vq_exp_rotation1
+/**
+ * Helper function to actually perform the rotations described in rfc6718 section 4.3.4.3.
+ *
+ * @param[in]     c        Value of cosine for desired theta
+ * @param[in]     s        Value of sine for desired theta
+ */
 static void exp_rotation1(celt_norm *X, int len, int stride, opus_val16 c, opus_val16 s)
 {
    int i;
@@ -71,6 +77,22 @@ static void exp_rotation1(celt_norm *X, int len, int stride, opus_val16 c, opus_
 }
 #endif /* OVERRIDE_vq_exp_rotation1 */
 
+/**
+ * Performs a rotation on an input vector as described in rfc6718 section 4.3.4.3.
+ *
+ * The input vector may contain several seperate blocks, in which case the rotation will be
+ * applied to the blocks seperately (as described in 4.3.4.3).
+ *
+ * @param[in,out] X          Vector
+ * @param[in]     len        Length of vector X
+ * @param[in]     dir        Flag that determines the direction of the rotations; if dir is -1,
+ *                           then the pi/2 - theta rotation is performed before the theta rotation,
+ *                           as is the case during encoding. If dir is 1, then the order of
+ *                           operations is appropriate for decoding.
+ * @param[in]     stride     Size of each block that should be treated seperately.
+ * @param[in]     K          Number of pulses; determines rotation gain as per rfc6718 sect 4.3.4.3.
+ * @param[in]     spread     Spread factor; determines rotation gain as per rfc6718 sect 4.3.4.3.
+ */
 void exp_rotation(celt_norm *X, int len, int dir, int stride, int K, int spread)
 {
    static const int SPREAD_FACTOR[3]={15,10,5};
@@ -116,8 +138,16 @@ void exp_rotation(celt_norm *X, int len, int dir, int stride, int K, int spread)
    }
 }
 
-/** Takes the pitch vector and the decoded residual vector, computes the gain
-    that will give ||p+g*y||=1 and mixes the residual with the pitch. */
+/**
+ * Takes the pitch vector and the decoded residual vector, computes the gain
+ * that will give ||p+g*y||=1 and mixes the residual with the pitch.
+ *
+ * @param[in]     iy
+ * @param[out]    X
+ * @param[in]     N
+ * @param[in]     Ryy      Magnitude (L2-norm) of passed-in vector
+ * @param[in]     gain
+ */
 static void normalise_residual(int * OPUS_RESTRICT iy, celt_norm * OPUS_RESTRICT X,
       int N, opus_val32 Ryy, opus_val16 gain)
 {
@@ -140,6 +170,24 @@ static void normalise_residual(int * OPUS_RESTRICT iy, celt_norm * OPUS_RESTRICT
    while (++i < N);
 }
 
+/**
+ * This function calculates the "collapse mask" for a decoded band vector. The "collapse mask" is a
+ * bitmask where each bit corresponds to a TF-resolution block for the given vector; if block n is
+ * collapsed (has all-0 components), the corresponding bit in the collapse mask will be 0.
+ *
+ * e.g. if a vector has values
+ *     {  0,  0,  4, -9,  0,  5,  0,  0}
+ *
+ * And has B = 4 (meaning that it's split into 4 seperate blocks), then its collapse mask will be
+ *
+ *     xxxx_0110
+ *
+ * @param[in]     iy         Vector of integer pulses for which to compute the collapse mask
+ * @param[in]     N          Length of vector 'iy'
+ * @param[in]     B          Number of seperate blocks in 'iy'
+ *
+ * @return The collapse mask for 'iy'.
+ */
 static unsigned extract_collapse_mask(int *iy, int N, int B)
 {
    unsigned collapse_mask;
@@ -360,6 +408,12 @@ unsigned alg_quant(celt_norm *X, int N, int K, int spread, int B, ec_enc *enc,
 
 /** Decode pulse vector and combine the result with the pitch vector to produce
     the final normalised signal in the current band. */
+/**
+ *
+ * @param[in,out] X
+ * @param[in]     N       Number of samples in X
+ * @param[in]     K
+ */
 unsigned alg_unquant(celt_norm *X, int N, int K, int spread, int B,
       ec_dec *dec, opus_val16 gain)
 {
